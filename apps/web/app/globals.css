@@ -1,0 +1,35 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+  --font-space-grotesk: "Space Grotesk", "Avenir Next", "Trebuchet MS", sans-serif;
+  --font-ibm-plex-mono: "IBM Plex Mono", "SFMono-Regular", "Consolas", monospace;
+}
+
+body {
+  @apply bg-sand text-ink antialiased;
+  background-image:
+    radial-gradient(circle at top left, rgba(255, 111, 60, 0.18), transparent 35%),
+    radial-gradient(circle at 80% 20%, rgba(38, 193, 255, 0.18), transparent 28%),
+    linear-gradient(180deg, #fffdf9 0%, #f4ede5 100%);
+  min-height: 100vh;
+}
+
+a {
+  @apply text-slate transition-colors;
+}
+
+a:hover {
+  @apply text-ember;
+}
+
+pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.page-grid {
+  background-size: 36px 36px;
+}
