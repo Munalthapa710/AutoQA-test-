@@ -311,7 +311,9 @@ class ExplorationEngine:
         page = state["page"]
         pre_url = page.url
         pre_title = await page.title()
+        before_page_state = await tools.get_page_state()
         status = StepStatus.PASSED.value
+        after_page_state = before_page_state
         details: dict[str, Any] = {"pre_url": pre_url, "pre_title": pre_title}
         step = None
 
@@ -334,16 +336,34 @@ class ExplorationEngine:
                 result = await tools.assert_url(action["value"])
             else:
                 raise ValueError(f"Unsupported action type: {action['type']}")
-            details.update({"result": result, "post_url": page.url, "post_title": await page.title()})
+            after_page_state = await tools.get_page_state()
+            details.update(
+                {
+                    "result": result,
+                    "post_url": page.url,
+                    "post_title": await page.title(),
+                    "page_diff": tools.compare_page_states(before_page_state, after_page_state),
+                }
+            )
         except (PlaywrightError, PlaywrightTimeoutError, AssertionError, ValueError) as exc:
             status = StepStatus.FAILED.value
-            details.update({"error": str(exc), "post_url": page.url, "post_title": await page.title()})
+            after_page_state = await tools.get_page_state()
+            details.update(
+                {
+                    "error": str(exc),
+                    "post_url": page.url,
+                    "post_title": await page.title(),
+                    "page_diff": tools.compare_page_states(before_page_state, after_page_state),
+                }
+            )
 
         details["form_signature"] = action.get("form_signature")
         details["submits_form"] = bool(action.get("submits_form"))
         details["form_scenario"] = action.get("form_scenario")
         details["form_variant_key"] = action.get("form_variant_key")
         details["form_label"] = action.get("form_label")
+        details["before_page_state"] = before_page_state
+        details["after_page_state"] = after_page_state
 
         step = await self._append_step(
             run=state["run"],
@@ -959,6 +979,21 @@ class ExplorationEngine:
                 for element in grouped_elements
                 if (element.get("inputType") or "").lower() == "email"
             ]
+            phone_targets = [
+                element
+                for element in grouped_elements
+                if self._is_phone_field(element)
+            ]
+            amount_targets = [
+                element
+                for element in grouped_elements
+                if self._is_amount_field(element)
+            ]
+            date_targets = [
+                element
+                for element in grouped_elements
+                if self._is_date_field(element)
+            ]
 
             for target in required_targets:
                 variant_key = f"{form_signature}|missing_required|{target['signature']}"
@@ -977,6 +1012,42 @@ class ExplorationEngine:
                 if variant_key not in attempted_form_variants:
                     variants[form_signature] = {
                         "name": "invalid_email",
+                        "target_signature": target["signature"],
+                        "variant_key": variant_key,
+                    }
+                    break
+            if form_signature in variants:
+                continue
+
+            for target in phone_targets:
+                variant_key = f"{form_signature}|invalid_phone|{target['signature']}"
+                if variant_key not in attempted_form_variants:
+                    variants[form_signature] = {
+                        "name": "invalid_phone",
+                        "target_signature": target["signature"],
+                        "variant_key": variant_key,
+                    }
+                    break
+            if form_signature in variants:
+                continue
+
+            for target in amount_targets:
+                variant_key = f"{form_signature}|boundary_amount|{target['signature']}"
+                if variant_key not in attempted_form_variants:
+                    variants[form_signature] = {
+                        "name": "boundary_amount",
+                        "target_signature": target["signature"],
+                        "variant_key": variant_key,
+                    }
+                    break
+            if form_signature in variants:
+                continue
+
+            for target in date_targets:
+                variant_key = f"{form_signature}|boundary_date|{target['signature']}"
+                if variant_key not in attempted_form_variants:
+                    variants[form_signature] = {
+                        "name": "boundary_date",
                         "target_signature": target["signature"],
                         "variant_key": variant_key,
                     }
@@ -1116,17 +1187,27 @@ class ExplorationEngine:
             return "" if normalize_text(str(element.get("value") or "")) else None
         if scenario == "invalid_email" and target_signature == element.get("signature"):
             return "invalid-email"
+        if scenario == "invalid_phone" and target_signature == element.get("signature"):
+            return "123"
+        if scenario == "boundary_amount" and target_signature == element.get("signature"):
+            return self._boundary_amount_value(element)
+        if scenario == "boundary_date" and target_signature == element.get("signature"):
+            return self._boundary_date_value(element)
         if "search" in label or "filter" in label or input_type == "search":
             return "test"
         if input_type == "password":
             return "AutoQA!234"
         if input_type == "email":
             return "qa@example.com"
+        if self._is_phone_field(element):
+            return "+15555550123"
+        if self._is_amount_field(element):
+            return "125.50"
         if input_type == "number":
             return "1"
         if input_type == "url":
             return "https://example.com"
-        if input_type == "date":
+        if self._is_date_field(element) or input_type == "date":
             return "2026-03-10"
         if input_type == "datetime-local":
             return "2026-03-10T09:30"
@@ -1158,12 +1239,60 @@ class ExplorationEngine:
             if not label:
                 continue
             placeholder_text = label.lower()
-            if placeholder_text in {"select", "choose", "please select"}:
+            if placeholder_text in {"select", "choose", "please select", "all"}:
                 continue
             if placeholder_text.startswith("select ") or placeholder_text.startswith("choose "):
                 continue
             return label
         return None
+
+    def _is_phone_field(self, element: dict[str, Any]) -> bool:
+        input_type = (element.get("inputType") or "").lower()
+        input_mode = (element.get("inputMode") or "").lower()
+        label = normalize_text(
+            element.get("label") or element.get("ariaLabel") or element.get("placeholder") or element.get("name")
+        ).lower()
+        return input_type == "tel" or input_mode == "tel" or any(token in label for token in {"phone", "mobile", "contact"})
+
+    def _is_amount_field(self, element: dict[str, Any]) -> bool:
+        input_type = (element.get("inputType") or "").lower()
+        label = normalize_text(
+            element.get("label") or element.get("ariaLabel") or element.get("placeholder") or element.get("name")
+        ).lower()
+        return input_type == "number" or any(
+            token in label for token in {"amount", "price", "cost", "rate", "fee", "total", "quantity", "qty"}
+        )
+
+    def _is_date_field(self, element: dict[str, Any]) -> bool:
+        input_type = (element.get("inputType") or "").lower()
+        label = normalize_text(
+            element.get("label") or element.get("ariaLabel") or element.get("placeholder") or element.get("name")
+        ).lower()
+        return input_type in {"date", "datetime-local"} or "date" in label
+
+    def _boundary_amount_value(self, element: dict[str, Any]) -> str:
+        minimum = normalize_text(str(element.get("min") or ""))
+        maximum = normalize_text(str(element.get("max") or ""))
+        if maximum:
+            try:
+                return str(float(maximum) + 1)
+            except ValueError:
+                pass
+        if minimum:
+            try:
+                return str(float(minimum) - 1)
+            except ValueError:
+                pass
+        return "999999999"
+
+    def _boundary_date_value(self, element: dict[str, Any]) -> str:
+        minimum = normalize_text(str(element.get("min") or ""))
+        maximum = normalize_text(str(element.get("max") or ""))
+        if minimum:
+            return "1900-01-01" if minimum > "1900-01-01" else minimum
+        if maximum:
+            return "2099-12-31" if maximum < "2099-12-31" else maximum
+        return "1900-01-01"
 
     def _rationale_for_field(self, element: dict[str, Any], category: str, scenario: str | None) -> str:
         label = normalize_text(element.get("displayLabel")).lower()
@@ -1171,6 +1300,12 @@ class ExplorationEngine:
             return f"Leave '{label}' empty once to verify that the form blocks incomplete submissions with clear validation."
         if scenario == "invalid_email" and (element.get("inputType") or "").lower() == "email":
             return f"Enter an invalid email into '{label}' once to check client-side or server-side validation."
+        if scenario == "invalid_phone" and self._is_phone_field(element):
+            return f"Enter an intentionally invalid phone number into '{label}' to verify phone validation and formatting rules."
+        if scenario == "boundary_amount" and self._is_amount_field(element):
+            return f"Enter an edge-case amount into '{label}' to check min/max boundaries and numeric validation."
+        if scenario == "boundary_date" and self._is_date_field(element):
+            return f"Enter an edge-case date into '{label}' to check date boundaries and datepicker validation."
         if category == "filter":
             return f"Filling '{label}' should exercise search or filtering behavior without mutating data."
         if element.get("formSignature"):
@@ -1184,6 +1319,8 @@ class ExplorationEngine:
             return f"Choose a visible option in '{label}' so the invalid-submission scenario only leaves the targeted required field empty."
         if scenario == "invalid_email":
             return f"Select a valid value for '{label}' while isolating the invalid email check."
+        if scenario in {"invalid_phone", "boundary_amount", "boundary_date"}:
+            return f"Choose a stable value for '{label}' while isolating the active form validation scenario."
         if category == "filter":
             return f"Selecting '{label}' should exercise a filter without mutating data."
         return "Selecting a visible option expands form coverage before attempting submission."
@@ -1214,6 +1351,12 @@ class ExplorationEngine:
             return f"Submit '{label}' once with an intentionally missing required field to check whether validation blocks the form clearly."
         if scenario == "invalid_email":
             return f"Submit '{label}' once with an invalid email value to verify validation messaging and error handling."
+        if scenario == "invalid_phone":
+            return f"Submit '{label}' once with an invalid phone number to verify validation messaging and error handling."
+        if scenario == "boundary_amount":
+            return f"Submit '{label}' once with a boundary amount value to verify numeric range handling."
+        if scenario == "boundary_date":
+            return f"Submit '{label}' once with a boundary date value to verify date validation and datepicker handling."
         if category == "filter":
             return f"Submitting '{label}' validates that the visible filter form actually changes the results surface."
         if risk == RiskLevel.SAFE.value:
@@ -1225,6 +1368,12 @@ class ExplorationEngine:
             return "The form submission did not show visible validation after the agent intentionally left a required field blank."
         if scenario == "invalid_email":
             return "The form submission did not show visible validation after the agent entered an invalid email format."
+        if scenario == "invalid_phone":
+            return "The form submission did not show visible validation after the agent entered an invalid phone number."
+        if scenario == "boundary_amount":
+            return "The form submission did not show the expected feedback for an out-of-range or edge-case numeric value."
+        if scenario == "boundary_date":
+            return "The form submission did not show the expected feedback for an out-of-range or edge-case date value."
         return "The form submission did not show the expected validation feedback for an intentionally invalid scenario."
 
     def _describe_form_feedback(self, feedback: dict[str, Any]) -> str:
@@ -1435,6 +1584,8 @@ class ExplorationEngine:
             enriched.setdefault("url", url)
         if step_context:
             enriched.setdefault("step_context", step_context)
+        if step is not None and isinstance(step.details, dict) and step.details.get("page_diff"):
+            enriched.setdefault("page_diff", step.details.get("page_diff"))
         return enriched
 
     def _assess_failure(
@@ -1479,7 +1630,7 @@ class ExplorationEngine:
                 "label": "Needs review",
                 "reason": "The agent could not safely continue, which indicates incomplete coverage rather than a confirmed product defect.",
             }
-        if scenario in {"missing_required", "invalid_email"} and "without visible validation" in text:
+        if scenario in {"missing_required", "invalid_email", "invalid_phone", "boundary_amount", "boundary_date"} and "without visible validation" in text:
             return {
                 "verdict": "confirmed-issue",
                 "label": "Confirmed issue",
@@ -1532,14 +1683,14 @@ class ExplorationEngine:
     ) -> list[str]:
         steps: list[str] = []
         if run is not None:
-            steps.append(f"Open the target application at {run.config.target_url}.")
+            steps.append("Open the application.")
             if run.config.login_url and run.config.username:
-                steps.append(f"Sign in through {run.config.login_url} with a valid test account.")
+                steps.append("Sign in with a valid test account.")
         elif url:
-            steps.append(f"Open {url}.")
+            steps.append(f"Open {self._friendly_location(url)}.")
 
         if url and run is not None and url != run.config.target_url:
-            steps.append(f"Navigate to {url}.")
+            steps.append(f"Go to {self._friendly_location(url)}.")
 
         if run is not None and step is not None:
             recent_steps = self._recent_steps(run_id=run.id, step_index=step.step_index)
@@ -1582,18 +1733,18 @@ class ExplorationEngine:
         page_url = normalize_text((step.url if step else None) or evidence.get("url"))
 
         if failure_type == FailureType.NETWORK.value:
-            request_url = normalize_text(evidence.get("url"))
             status = evidence.get("status")
+            location = self._friendly_location(page_url or evidence.get("url"))
             if status:
-                return f"Request to {request_url or page_url or 'the backend'} returned HTTP {status}"
-            return f"Network request failed while testing {action_label}"
+                return f"{location} shows an HTTP {status} error"
+            return f"{location} fails because a network request did not complete"
         if failure_type == FailureType.CONSOLE.value:
-            return f"Console error appears after interacting with {action_label}"
+            return f"{action_label} triggers a browser error"
         if failure_type == FailureType.ACCESSIBILITY.value:
-            return f"Accessibility issue found on {page_url or 'the current page'}"
+            return f"Accessibility issue found on {self._friendly_location(page_url)}"
         if scenario == "happy_path":
             return f"Valid submission for {action_label} fails instead of completing successfully"
-        if scenario in {"missing_required", "invalid_email"} and "without visible validation" in description.lower():
+        if scenario in {"missing_required", "invalid_email", "invalid_phone", "boundary_amount", "boundary_date"} and "without visible validation" in description.lower():
             return f"{action_label} accepts invalid input without validation"
         if step is not None and step.action in {"goto", "backtrack"}:
             return f"Navigation to {action_label} failed"
@@ -1616,12 +1767,12 @@ class ExplorationEngine:
         action = evidence.get("action", {}) if isinstance(evidence.get("action"), dict) else {}
         scenario = action.get("form_scenario")
         if failure_type == FailureType.NETWORK.value:
-            return normalize_text(description) or "The browser recorded a failed network request."
+            return normalize_text(description) or "The page showed a network error instead of completing the action."
         if failure_type == FailureType.CONSOLE.value:
-            return normalize_text(description) or "The browser console logged an error."
+            return normalize_text(description) or "The page triggered a browser error after the action."
         if failure_type == FailureType.ACCESSIBILITY.value:
             return normalize_text(description) or "Accessibility findings were detected on the page."
-        if scenario in {"missing_required", "invalid_email"} and "without visible validation" in description.lower():
+        if scenario in {"missing_required", "invalid_email", "invalid_phone", "boundary_amount", "boundary_date"} and "without visible validation" in description.lower():
             return "The form submission went through without showing the expected validation feedback."
         if scenario == "happy_path":
             return "The form surfaced validation or generic error feedback during a valid submission attempt."
@@ -1640,9 +1791,9 @@ class ExplorationEngine:
         action = evidence.get("action", {}) if isinstance(evidence.get("action"), dict) else {}
         scenario = action.get("form_scenario")
         if failure_type == FailureType.NETWORK.value:
-            return "The related request should complete successfully without transport or HTTP failure."
+            return "The action should finish successfully without any network or server error."
         if failure_type == FailureType.CONSOLE.value:
-            return "The browser console should remain free of runtime errors during the tested flow."
+            return "The page should complete the action without triggering any browser errors."
         if failure_type == FailureType.ACCESSIBILITY.value:
             return "Interactive content should meet the basic accessibility checks collected by the agent."
         if scenario == "happy_path":
@@ -1651,6 +1802,12 @@ class ExplorationEngine:
             return "The form should block submission and highlight the missing required field with clear validation."
         if scenario == "invalid_email":
             return "The form should block submission and show validation for the invalid email value."
+        if scenario == "invalid_phone":
+            return "The form should block submission and show validation for the invalid phone number."
+        if scenario == "boundary_amount":
+            return "The form should enforce min/max or numeric boundary rules for the entered amount."
+        if scenario == "boundary_date":
+            return "The form should enforce min/max or valid-range rules for the entered date."
         if failure_type == FailureType.ASSERTION.value:
             return "The page should remain usable and display the expected content after the action."
         if step is not None and step.action in {"goto", "backtrack"}:
@@ -1675,7 +1832,7 @@ class ExplorationEngine:
         if step.action == "submit_login":
             return "Submit the login form."
         if step.action in {"goto", "backtrack"}:
-            return f"Open {step.url or label}."
+            return f"Go to {self._friendly_location(step.url or label)}."
         if step.action == "fill":
             return f"Fill {label}."
         if step.action == "select":
@@ -1687,6 +1844,22 @@ class ExplorationEngine:
         if step.action == "press":
             return f"Press {label}."
         return f"Perform {step.action} on {label}."
+
+    def _friendly_location(self, value: Any) -> str:
+        text = normalize_text(str(value or ""))
+        if not text:
+            return "the current page"
+        parsed = urlparse(text)
+        if not parsed.scheme or not parsed.netloc:
+            return text
+        segments = [
+            segment.replace("-", " ").replace("_", " ").strip()
+            for segment in parsed.path.split("/")
+            if segment and segment.lower() != "admin"
+        ]
+        if not segments:
+            return "Dashboard"
+        return " -> ".join(segment.title() for segment in segments)
 
     def _build_failure_markdown(
         self,
@@ -1709,6 +1882,9 @@ class ExplorationEngine:
             f"- Severity: {report.severity}",
             f"- Failure type: {report.failure_type}",
         ]
+        if bug_report.get("page_url"):
+            lines.append(f"- Module: {self._friendly_location(bug_report['page_url'])}")
+            lines.append("- Environment: Web Application")
         if bug_report.get("page_url"):
             lines.append(f"- URL: {bug_report['page_url']}")
         if step is not None:
@@ -1737,6 +1913,36 @@ class ExplorationEngine:
         if isinstance(reproduction_steps, list) and reproduction_steps:
             lines.extend(["", "## Reproduction steps"])
             lines.extend(f"{index}. {item}" for index, item in enumerate(reproduction_steps, start=1))
+
+        page_diff = raw_evidence.get("page_diff") if isinstance(raw_evidence, dict) else None
+        if isinstance(page_diff, dict):
+            lines.extend(["", "## What changed on the page"])
+            if page_diff.get("url_changed"):
+                lines.append(
+                    f"- URL changed: {page_diff.get('before_url', 'n/a')} -> {page_diff.get('after_url', 'n/a')}"
+                )
+            if page_diff.get("title_changed"):
+                lines.append(
+                    f"- Title changed: {page_diff.get('before_title', 'n/a')} -> {page_diff.get('after_title', 'n/a')}"
+                )
+            if page_diff.get("after_validation_messages"):
+                lines.append("- Validation shown:")
+                lines.extend(f"  - {message}" for message in page_diff["after_validation_messages"])
+            if page_diff.get("after_alerts"):
+                lines.append("- Messages shown:")
+                lines.extend(f"  - {message}" for message in page_diff["after_alerts"])
+            if page_diff.get("button_state_changes"):
+                lines.append("- Button state changes:")
+                for change in page_diff["button_state_changes"]:
+                    if isinstance(change, dict):
+                        lines.append(
+                            f"  - {change.get('label', 'Unnamed button')}: "
+                            f"{'disabled' if change.get('before_disabled') else 'enabled'} -> "
+                            f"{'disabled' if change.get('after_disabled') else 'enabled'}"
+                        )
+            if page_diff.get("new_visible_text"):
+                lines.append("- New text shown:")
+                lines.extend(f"  - {entry}" for entry in page_diff["new_visible_text"])
 
         lines.extend(["", "## Raw evidence", "```json", json.dumps(raw_evidence, indent=2), "```"])
         if run is not None:

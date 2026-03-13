@@ -191,7 +191,7 @@ export function RunDetail({ runId }: { runId: string }) {
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="min-w-0 flex-1">
                       <p className="font-mono text-xs uppercase tracking-[0.22em] text-slate/60">
-                        Step {step.step_index} · {step.node_name}
+                        Step {step.step_index} - {step.node_name}
                       </p>
                       <h3 className="overflow-anywhere mt-1 font-display text-xl font-semibold text-ink">{step.action}</h3>
                     </div>
@@ -272,7 +272,7 @@ export function RunDetail({ runId }: { runId: string }) {
             <FileCode2 className="h-5 w-5 text-slate" />
             <div>
               <p className="font-mono text-xs uppercase tracking-[0.34em] text-slate/60">Discovered flows</p>
-              <h2 className="mt-1 font-display text-2xl font-semibold text-ink">Reusable coverage</h2>
+              <h2 className="mt-1 font-display text-2xl font-semibold text-ink">Reusable coverage ({flows.length})</h2>
             </div>
           </div>
           <div className="mt-6 max-h-[520px] space-y-4 overflow-y-auto pr-2">
@@ -314,7 +314,7 @@ export function RunDetail({ runId }: { runId: string }) {
             <TriangleAlert className="h-5 w-5 text-slate" />
             <div>
               <p className="font-mono text-xs uppercase tracking-[0.34em] text-slate/60">Detected issues</p>
-              <h2 className="mt-1 font-display text-2xl font-semibold text-ink">Failures and findings</h2>
+              <h2 className="mt-1 font-display text-2xl font-semibold text-ink">Failures and findings ({failures.length})</h2>
             </div>
           </div>
           <div className="mt-6 max-h-[520px] space-y-4 overflow-y-auto pr-2">
@@ -328,6 +328,7 @@ export function RunDetail({ runId }: { runId: string }) {
                 const failureScreenshots = failure.step_id ? screenshotsByStepId.get(failure.step_id) ?? [] : [];
                 const primaryScreenshot = failureScreenshots[0] ?? null;
                 const displayTitle = bugReport?.title ?? failure.title;
+                const moduleLabel = formatModuleLabel(bugReport?.pageUrl ?? linkedStep?.url ?? run.config.target_url);
 
                 return (
                   <article key={failure.id} className="overflow-hidden rounded-[24px] border border-rose-200 bg-rose-50/70 p-4">
@@ -349,37 +350,38 @@ export function RunDetail({ runId }: { runId: string }) {
                     )}
 
                     <div className="mt-4 rounded-[22px] border border-rose-200/70 bg-white/80 px-4 py-4">
-                      <p className="font-mono text-xs uppercase tracking-[0.22em] text-rose-700/70">ClickUp handoff</p>
+                      <p className="font-mono text-xs uppercase tracking-[0.22em] text-rose-700/70">Bug report</p>
                       <p className="overflow-anywhere mt-2 font-display text-lg font-semibold text-rose-950">{displayTitle}</p>
                       <p className="mt-2 text-sm leading-6 text-rose-950/85">
-                        Use this title and the fields below when filing the issue manually for developers.
+                        Copy these details into your bug tracker. The wording is already simplified for QA handoff.
                       </p>
                     </div>
 
                     <div className="mt-4 grid gap-3 sm:grid-cols-2">
                       <IssueField label="Bug title" value={displayTitle} />
+                      <IssueField label="Module" value={moduleLabel} />
+                      <IssueField label="Environment" value="Web Application" />
                       <IssueField label="Page" value={bugReport?.pageUrl ?? linkedStep?.url ?? "n/a"} />
                       <IssueField
                         label="Step"
-                        value={linkedStep ? `${linkedStep.step_index} · ${linkedStep.action}` : "n/a"}
+                        value={linkedStep ? `${linkedStep.step_index} - ${linkedStep.action}` : "n/a"}
                       />
                       <IssueField label="Element" value={linkedStep?.element_label ?? "n/a"} />
                       <IssueField label="Assessment" value={bugReport?.assessment ?? "Needs review"} />
                     </div>
 
                     {bugReport?.bugDescription ? <IssueBlock title="Bug description" value={bugReport.bugDescription} /> : null}
-                    {bugReport?.actualResult ? <IssueBlock title="Actual result" value={bugReport.actualResult} /> : null}
-                    {bugReport?.expectedResult ? <IssueBlock title="Expected result" value={bugReport.expectedResult} /> : null}
-                    {bugReport?.reason ? <IssueBlock title="Why this matters" value={bugReport.reason} /> : null}
 
                     {primaryScreenshot ? (
-                      <div className="mt-4">
-                        <p className="font-mono text-xs uppercase tracking-[0.22em] text-rose-700/70">Failure screenshot</p>
+                      <details className="mt-4 overflow-hidden rounded-[22px] border border-rose-200/70 bg-white/80">
+                        <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-rose-950">
+                          Toggle failure screenshot
+                        </summary>
                         <a
                           href={artifactUrl(primaryScreenshot.file_path)}
                           target="_blank"
                           rel="noreferrer"
-                          className="mt-3 block overflow-hidden rounded-[22px] border border-rose-200/70 bg-white"
+                          className="block border-t border-rose-100"
                         >
                           {/* eslint-disable-next-line @next/next/no-img-element */}
                           <img
@@ -391,19 +393,14 @@ export function RunDetail({ runId }: { runId: string }) {
                             {primaryScreenshot.file_path}
                           </div>
                         </a>
-                      </div>
+                      </details>
                     ) : null}
 
-                    {bugReport?.reproductionSteps.length ? (
-                      <div className="mt-4">
-                        <p className="font-mono text-xs uppercase tracking-[0.22em] text-rose-700/70">Reproduction path</p>
-                        <ol className="mt-3 space-y-2 text-sm leading-6 text-rose-950/85">
-                          {bugReport.reproductionSteps.map((item, index) => (
-                            <li key={`${failure.id}-${index}`}>{index + 1}. {item}</li>
-                          ))}
-                        </ol>
-                      </div>
-                    ) : null}
+                    {bugReport?.reproductionSteps.length ? <IssueSteps title="Steps to Reproduce" items={bugReport.reproductionSteps} /> : null}
+                    {bugReport?.actualResult ? <IssueBlock title="Actual Result" value={bugReport.actualResult} /> : null}
+                    {bugReport?.expectedResult ? <IssueBlock title="Expected Result" value={bugReport.expectedResult} /> : null}
+                    <PageDiffBlock pageDiff={getPageDiff(failure.evidence)} />
+                    {bugReport?.reason ? <IssueBlock title="Why this matters" value={bugReport.reason} /> : null}
 
                     {reportArtifacts.length ? (
                       <div className="mt-4 flex flex-wrap gap-3">
@@ -442,7 +439,7 @@ export function RunDetail({ runId }: { runId: string }) {
             <ImageIcon className="h-5 w-5 text-slate" />
             <div>
               <p className="font-mono text-xs uppercase tracking-[0.34em] text-slate/60">Artifacts</p>
-              <h2 className="mt-1 font-display text-2xl font-semibold text-ink">Screenshots, traces, and reports</h2>
+              <h2 className="mt-1 font-display text-2xl font-semibold text-ink">Screenshots, traces, and reports ({artifacts.length})</h2>
             </div>
           </div>
           <div className="mt-6 max-h-[520px] overflow-y-auto pr-2">
@@ -477,7 +474,7 @@ export function RunDetail({ runId }: { runId: string }) {
             <FileCode2 className="h-5 w-5 text-slate" />
             <div>
               <p className="font-mono text-xs uppercase tracking-[0.34em] text-slate/60">Generated tests</p>
-              <h2 className="mt-1 font-display text-2xl font-semibold text-ink">Readable Playwright output</h2>
+              <h2 className="mt-1 font-display text-2xl font-semibold text-ink">Readable Playwright output ({tests.length})</h2>
             </div>
           </div>
           <div className="mt-6 max-h-[520px] space-y-4 overflow-y-auto pr-2">
@@ -544,6 +541,87 @@ function IssueBlock({ title, value }: { title: string; value: string }) {
   );
 }
 
+function IssueSteps({ title, items }: { title: string; items: string[] }) {
+  return (
+    <div className="mt-4 rounded-[22px] border border-rose-200/70 bg-white/75 px-4 py-4">
+      <p className="font-mono text-xs uppercase tracking-[0.22em] text-rose-700/70">{title}</p>
+      <ol className="mt-3 space-y-2 text-sm leading-6 text-rose-950/90">
+        {items.map((item, index) => (
+          <li key={`${title}-${index}`}>{index + 1}. {formatReproductionStep(item)}</li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
+function PageDiffBlock({ pageDiff }: { pageDiff: PageDiff | null }) {
+  if (!pageDiff) {
+    return null;
+  }
+
+  const hasChanges =
+    pageDiff.urlChanged ||
+    pageDiff.titleChanged ||
+    pageDiff.afterValidationMessages.length > 0 ||
+    pageDiff.afterAlerts.length > 0 ||
+    pageDiff.buttonStateChanges.length > 0 ||
+    pageDiff.newVisibleText.length > 0 ||
+    pageDiff.removedVisibleText.length > 0;
+
+  if (!hasChanges) {
+    return null;
+  }
+
+  return (
+    <div className="mt-4 rounded-[22px] border border-rose-200/70 bg-white/75 px-4 py-4">
+      <p className="font-mono text-xs uppercase tracking-[0.22em] text-rose-700/70">What changed on the page</p>
+      <div className="mt-3 space-y-3 text-sm leading-6 text-rose-950/90">
+        {pageDiff.urlChanged ? (
+          <IssueChangeRow label="URL changed" value={`${pageDiff.beforeUrl ?? "n/a"} -> ${pageDiff.afterUrl ?? "n/a"}`} />
+        ) : null}
+        {pageDiff.titleChanged ? (
+          <IssueChangeRow label="Title changed" value={`${pageDiff.beforeTitle ?? "n/a"} -> ${pageDiff.afterTitle ?? "n/a"}`} />
+        ) : null}
+        {pageDiff.afterValidationMessages.length > 0 ? (
+          <IssueList title="Validation shown" items={pageDiff.afterValidationMessages} />
+        ) : null}
+        {pageDiff.afterAlerts.length > 0 ? <IssueList title="Messages shown" items={pageDiff.afterAlerts} /> : null}
+        {pageDiff.buttonStateChanges.length > 0 ? (
+          <IssueList
+            title="Button state changes"
+            items={pageDiff.buttonStateChanges.map(
+              (change) =>
+                `${change.label}: ${formatButtonState(change.beforeDisabled)} -> ${formatButtonState(change.afterDisabled)}`,
+            )}
+          />
+        ) : null}
+        {pageDiff.newVisibleText.length > 0 ? <IssueList title="New text shown" items={pageDiff.newVisibleText} /> : null}
+      </div>
+    </div>
+  );
+}
+
+function IssueChangeRow({ label, value }: { label: string; value: string }) {
+  return (
+    <p>
+      <span className="font-semibold text-rose-950">{label}:</span> {value}
+    </p>
+  );
+}
+
+function IssueList({ title, items }: { title: string; items: string[] }) {
+  return (
+    <div>
+      <p className="font-semibold text-rose-950">{title}</p>
+      <ul className="mt-1 space-y-1">
+        {items.map((item, index) => (
+          <li key={`${title}-${index}`} className="overflow-anywhere">- {item}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 function CoverageTile({ title, value, description }: { title: string; value: string; description: string }) {
   return (
     <div className="rounded-[24px] border border-slate/10 bg-sand/50 px-4 py-4">
@@ -575,6 +653,26 @@ type BugReport = {
   reproductionSteps: string[];
 };
 
+type PageDiff = {
+  urlChanged: boolean;
+  titleChanged: boolean;
+  beforeUrl: string | null;
+  afterUrl: string | null;
+  beforeTitle: string | null;
+  afterTitle: string | null;
+  newVisibleText: string[];
+  removedVisibleText: string[];
+  beforeValidationMessages: string[];
+  afterValidationMessages: string[];
+  beforeAlerts: string[];
+  afterAlerts: string[];
+  buttonStateChanges: Array<{
+    label: string;
+    beforeDisabled: boolean | null;
+    afterDisabled: boolean | null;
+  }>;
+};
+
 function getBugReport(evidence: Record<string, unknown>): BugReport | null {
   const report = getRecord(evidence.bug_report);
   if (!report) {
@@ -593,6 +691,40 @@ function getBugReport(evidence: Record<string, unknown>): BugReport | null {
   };
 }
 
+function getPageDiff(evidence: Record<string, unknown>): PageDiff | null {
+  const diff = getRecord(evidence.page_diff);
+  if (!diff) {
+    return null;
+  }
+
+  const buttonStateChanges = Array.isArray(diff.button_state_changes)
+    ? diff.button_state_changes
+        .map((entry) => getRecord(entry))
+        .filter((entry): entry is Record<string, unknown> => entry !== null)
+        .map((entry) => ({
+          label: getString(entry.label) ?? "Unnamed button",
+          beforeDisabled: typeof entry.before_disabled === "boolean" ? entry.before_disabled : null,
+          afterDisabled: typeof entry.after_disabled === "boolean" ? entry.after_disabled : null,
+        }))
+    : [];
+
+  return {
+    urlChanged: Boolean(diff.url_changed),
+    titleChanged: Boolean(diff.title_changed),
+    beforeUrl: getString(diff.before_url),
+    afterUrl: getString(diff.after_url),
+    beforeTitle: getString(diff.before_title),
+    afterTitle: getString(diff.after_title),
+    newVisibleText: getStringArray(diff.new_visible_text),
+    removedVisibleText: getStringArray(diff.removed_visible_text),
+    beforeValidationMessages: getStringArray(diff.before_validation_messages),
+    afterValidationMessages: getStringArray(diff.after_validation_messages),
+    beforeAlerts: getStringArray(diff.before_alerts),
+    afterAlerts: getStringArray(diff.after_alerts),
+    buttonStateChanges,
+  };
+}
+
 function stripBugReport(evidence: Record<string, unknown>) {
   const { bug_report: _bugReport, ...rest } = evidence;
   return rest;
@@ -601,7 +733,7 @@ function stripBugReport(evidence: Record<string, unknown>) {
 function artifactLabel(artifact: Artifact) {
   const metadata = getRecord(artifact.artifact_metadata);
   const format = metadata ? getString(metadata.format) : null;
-  return format ? `${artifact.type} · ${format}` : artifact.type;
+  return format ? `${artifact.type} - ${format}` : artifact.type;
 }
 
 function getRecord(value: unknown): Record<string, unknown> | null {
@@ -621,4 +753,70 @@ function getStringArray(value: unknown): string[] {
     return [];
   }
   return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+}
+
+function formatModuleLabel(url: string | null | undefined): string {
+  if (!url) {
+    return "Current Flow";
+  }
+
+  try {
+    const parsed = new URL(url);
+    const segments = parsed.pathname
+      .split("/")
+      .filter(Boolean)
+      .filter((segment) => segment.toLowerCase() !== "admin")
+      .map((segment) =>
+        segment
+          .replace(/[-_]+/g, " ")
+          .replace(/\b\w/g, (char) => char.toUpperCase()),
+      );
+
+    if (segments.length === 0) {
+      return "Dashboard";
+    }
+
+    return segments.join(" -> ");
+  } catch {
+    return "Current Flow";
+  }
+}
+
+function formatReproductionStep(step: string): string {
+  const trimmed = step.trim();
+
+  const openTargetMatch = trimmed.match(/^Open the target application at (.+)\.$/i);
+  if (openTargetMatch) {
+    return "Open the application.";
+  }
+
+  const signInMatch = trimmed.match(/^Sign in through (.+) with a valid test account\.$/i);
+  if (signInMatch) {
+    return "Sign in with a valid test account.";
+  }
+
+  const openUrlMatch = trimmed.match(/^(Open|Navigate to) (https?:\/\/[^\s]+)\.?$/i);
+  if (openUrlMatch) {
+    return `Go to ${formatModuleLabel(openUrlMatch[2])}.`;
+  }
+
+  const observeMatch = trimmed.match(/^Observe the issue titled '(.+)'\.$/i);
+  if (observeMatch) {
+    return `Check the result: ${observeMatch[1]}.`;
+  }
+
+  return trimmed
+    .replace(/^Submit /i, "Click ")
+    .replace(/^Open /i, "Go to ")
+    .replace(/\.$/, "") + ".";
+}
+
+function formatButtonState(value: boolean | null): string {
+  if (value === true) {
+    return "disabled";
+  }
+  if (value === false) {
+    return "enabled";
+  }
+  return "unknown";
 }

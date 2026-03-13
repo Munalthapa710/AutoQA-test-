@@ -184,6 +184,30 @@ class PlaywrightTools:
               };
               const bodyText = Array.from(document.querySelectorAll('main, [role="main"], body'))
                 .find((element) => visible(element))?.innerText ?? '';
+              const visibleButtons = Array.from(document.querySelectorAll('button, input[type="submit"], input[type="button"], a[href], [role="button"]'))
+                .filter((element) => visible(element))
+                .map((element) => {
+                  const label = (element.innerText || element.textContent || element.getAttribute('aria-label') || element.getAttribute('value') || '').trim();
+                  const disabled = !!element.disabled || element.getAttribute('aria-disabled') === 'true';
+                  return {
+                    label: label.slice(0, 120),
+                    disabled,
+                  };
+                })
+                .filter((entry) => entry.label)
+                .slice(0, 24);
+              const validationMessages = Array.from(document.querySelectorAll('input, select, textarea'))
+                .filter((element) => visible(element) && !element.disabled && ((element.validationMessage || '').trim() || element.matches(':invalid') || element.getAttribute('aria-invalid') === 'true'))
+                .map((element) => {
+                  const label = element.getAttribute('aria-label') || element.getAttribute('placeholder') || element.getAttribute('name') || element.getAttribute('id') || element.tagName.toLowerCase();
+                  return `${label}: ${(element.validationMessage || '').trim()}`.trim();
+                })
+                .slice(0, 12);
+              const alerts = Array.from(document.querySelectorAll('[role="alert"], [aria-live="assertive"], .error, .errors, .field-error, .invalid-feedback, .alert-danger, .alert-success, .success'))
+                .filter((element) => visible(element))
+                .map((element) => (element.innerText || element.textContent || '').trim())
+                .filter(Boolean)
+                .slice(0, 12);
               return {
                 title: document.title,
                 url: window.location.href,
@@ -195,11 +219,57 @@ class PlaywrightTools:
                 tables: document.querySelectorAll('table').length,
                 modals: document.querySelectorAll('[role="dialog"], dialog').length,
                 visibleText: bodyText.slice(0, 1200),
+                visibleButtons,
+                validationMessages,
+                alerts,
               };
             }
             """
         )
         return dict(snapshot)
+
+    def compare_page_states(self, before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
+        before_text = normalize_text(str(before.get("visibleText") or ""))
+        after_text = normalize_text(str(after.get("visibleText") or ""))
+        before_lines = {line.strip() for line in before_text.splitlines() if line.strip()}
+        after_lines = {line.strip() for line in after_text.splitlines() if line.strip()}
+        before_buttons = {
+            normalize_text(str(entry.get("label") or "")): bool(entry.get("disabled"))
+            for entry in before.get("visibleButtons", [])
+            if isinstance(entry, dict) and normalize_text(str(entry.get("label") or ""))
+        }
+        after_buttons = {
+            normalize_text(str(entry.get("label") or "")): bool(entry.get("disabled"))
+            for entry in after.get("visibleButtons", [])
+            if isinstance(entry, dict) and normalize_text(str(entry.get("label") or ""))
+        }
+
+        button_state_changes: list[dict[str, Any]] = []
+        for label in sorted(set(before_buttons) | set(after_buttons)):
+            if before_buttons.get(label) != after_buttons.get(label):
+                button_state_changes.append(
+                    {
+                        "label": label,
+                        "before_disabled": before_buttons.get(label),
+                        "after_disabled": after_buttons.get(label),
+                    }
+                )
+
+        return {
+            "url_changed": before.get("url") != after.get("url"),
+            "title_changed": before.get("title") != after.get("title"),
+            "before_url": before.get("url"),
+            "after_url": after.get("url"),
+            "before_title": before.get("title"),
+            "after_title": after.get("title"),
+            "new_visible_text": sorted((after_lines - before_lines))[:8],
+            "removed_visible_text": sorted((before_lines - after_lines))[:8],
+            "before_validation_messages": list(before.get("validationMessages", []))[:8],
+            "after_validation_messages": list(after.get("validationMessages", []))[:8],
+            "before_alerts": list(before.get("alerts", []))[:8],
+            "after_alerts": list(after.get("alerts", []))[:8],
+            "button_state_changes": button_state_changes[:12],
+        }
 
     async def list_interactive_elements(self) -> list[dict[str, Any]]:
         elements = await self.page.evaluate(
@@ -346,6 +416,12 @@ class PlaywrightTools:
                     label: label.slice(0, 120),
                     placeholder: element.getAttribute('placeholder') || '',
                     inputType: element.getAttribute('type') || '',
+                    inputMode: element.getAttribute('inputmode') || '',
+                    min: element.getAttribute('min') || '',
+                    max: element.getAttribute('max') || '',
+                    step: element.getAttribute('step') || '',
+                    pattern: element.getAttribute('pattern') || '',
+                    autocomplete: element.getAttribute('autocomplete') || '',
                     disabled: !!element.disabled || element.getAttribute('aria-disabled') === 'true',
                     value: element.value || '',
                     checked: "checked" in element ? !!element.checked : false,
