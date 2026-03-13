@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  web-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install web dependencies
+        run: npm install
+
+      - name: Build web app
+        run: npm run build:web
+
+  python-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        run: pip install -r requirements-api.txt -r requirements-worker.txt
+
+      - name: Import smoke check
+        env:
+          PYTHONPATH: ${{ github.workspace }}/packages/python:${{ github.workspace }}/apps/api:${{ github.workspace }}/apps/worker
+        run: python -c "import worker.main, app.main, autoqa_shared.queue"

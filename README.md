@@ -183,3 +183,9 @@ Successful flows are saved as readable TypeScript specs under `./generated-tests
 - safe mode blocks obviously destructive actions, but cannot perfectly infer every irreversible admin operation
 - the exploration planner uses deterministic heuristics instead of an LLM policy, which keeps the MVP reproducible but less adaptive
 - screenshots are captured after each executed step; video capture is not included
+
+## Attribution
+
+This enhancement branch is based on the original project by `chuchu387`.
+
+Current work in this repository builds on that codebase with local-run improvements, dashboard UI cleanup, and quality-of-life fixes for running and reviewing AutoQA locally.

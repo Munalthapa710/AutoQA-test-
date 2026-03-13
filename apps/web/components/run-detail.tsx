@@ -83,6 +83,16 @@ export function RunDetail({ runId }: { runId: string }) {
     }
     return grouped;
   }, [artifacts]);
+  const screenshotsByStepId = useMemo(() => {
+    const grouped = new Map<string, Artifact[]>();
+    for (const artifact of screenshots) {
+      if (!artifact.step_id) {
+        continue;
+      }
+      grouped.set(artifact.step_id, [...(grouped.get(artifact.step_id) ?? []), artifact]);
+    }
+    return grouped;
+  }, [screenshots]);
   const summary = useMemo(() => {
     const runSummary = getRecord(run?.summary);
     return {
@@ -122,13 +132,13 @@ export function RunDetail({ runId }: { runId: string }) {
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
               <p className="font-mono text-xs uppercase tracking-[0.34em] text-slate/60">Run detail</p>
-              <h1 className="mt-2 font-display text-3xl font-semibold text-ink">{run.config.name}</h1>
-              <p className="mt-2 text-sm text-slate/75">{run.config.target_url}</p>
+              <h1 className="overflow-anywhere mt-2 font-display text-3xl font-semibold text-ink">{run.config.name}</h1>
+              <p className="overflow-anywhere mt-2 text-sm text-slate/75">{run.config.target_url}</p>
             </div>
             <StatusBadge value={run.status} />
           </div>
 
-          <div className="mt-6 grid gap-3 sm:grid-cols-6">
+          <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             <KeyStat title="Steps" value={String(steps.length)} />
             <KeyStat title="Pages" value={String(summary.visitedPages)} />
             <KeyStat title="Flows" value={String(flows.length)} />
@@ -138,7 +148,7 @@ export function RunDetail({ runId }: { runId: string }) {
             <KeyStat title="Specs" value={String(tests.length)} />
           </div>
 
-          <div className="mt-6 grid gap-3 text-sm text-slate/75 sm:grid-cols-3">
+          <div className="mt-6 grid gap-3 text-sm text-slate/75 sm:grid-cols-2 xl:grid-cols-3">
             <InfoPill label="Created" value={formatDistanceToNow(new Date(run.created_at), { addSuffix: true })} />
             <InfoPill label="Safe mode" value={run.safe_mode ? "enabled" : "disabled"} />
             <InfoPill label="Max steps" value={String(run.max_steps)} />
@@ -177,13 +187,13 @@ export function RunDetail({ runId }: { runId: string }) {
               <p className="text-sm text-slate/70">No steps recorded yet.</p>
             ) : (
               steps.map((step) => (
-                <article key={step.id} className="rounded-[24px] border border-slate/10 bg-sand/50 p-4">
+                <article key={step.id} className="overflow-hidden rounded-[24px] border border-slate/10 bg-sand/50 p-4">
                   <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div>
+                    <div className="min-w-0 flex-1">
                       <p className="font-mono text-xs uppercase tracking-[0.22em] text-slate/60">
                         Step {step.step_index} · {step.node_name}
                       </p>
-                      <h3 className="mt-1 font-display text-xl font-semibold text-ink">{step.action}</h3>
+                      <h3 className="overflow-anywhere mt-1 font-display text-xl font-semibold text-ink">{step.action}</h3>
                     </div>
                     <div className="flex gap-2">
                       <StatusBadge value={step.status} />
@@ -192,10 +202,10 @@ export function RunDetail({ runId }: { runId: string }) {
                   </div>
                   <p className="mt-3 text-sm leading-6 text-slate/80">{step.rationale}</p>
                   <div className="mt-4 grid gap-2 text-sm text-slate/75 sm:grid-cols-2">
-                    <span>Element: {step.element_label ?? "n/a"}</span>
+                    <span className="overflow-anywhere">Element: {step.element_label ?? "n/a"}</span>
                     <span>Confidence: {(step.confidence * 100).toFixed(0)}%</span>
-                    <span>Page: {step.page_title ?? "Untitled"}</span>
-                    <span className="truncate">URL: {step.url ?? "n/a"}</span>
+                    <span className="overflow-anywhere">Page: {step.page_title ?? "Untitled"}</span>
+                    <span className="overflow-anywhere">URL: {step.url ?? "n/a"}</span>
                   </div>
                   {"error" in step.details ? (
                     <p className="mt-4 rounded-2xl bg-rose-50 px-4 py-3 text-sm text-rose-700">{String(step.details.error)}</p>
@@ -265,18 +275,18 @@ export function RunDetail({ runId }: { runId: string }) {
               <h2 className="mt-1 font-display text-2xl font-semibold text-ink">Reusable coverage</h2>
             </div>
           </div>
-          <div className="mt-6 space-y-4">
+          <div className="mt-6 max-h-[520px] space-y-4 overflow-y-auto pr-2">
             {flows.length === 0 ? (
               <p className="text-sm text-slate/70">No flows have been captured yet.</p>
             ) : (
               flows.map((flow) => {
                 const linkedTest = tests.find((test) => test.flow_id === flow.id);
                 return (
-                  <article key={flow.id} className="rounded-[24px] border border-slate/10 bg-sand/50 p-4">
+                  <article key={flow.id} className="overflow-hidden rounded-[24px] border border-slate/10 bg-sand/50 p-4">
                     <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div>
+                      <div className="min-w-0 flex-1">
                         <p className="font-mono text-xs uppercase tracking-[0.22em] text-slate/60">{flow.flow_type}</p>
-                        <h3 className="mt-1 font-display text-xl font-semibold text-ink">{flow.name}</h3>
+                        <h3 className="overflow-anywhere mt-1 font-display text-xl font-semibold text-ink">{flow.name}</h3>
                       </div>
                       <StatusBadge value={flow.success ? "completed" : "failed"} />
                     </div>
@@ -307,7 +317,7 @@ export function RunDetail({ runId }: { runId: string }) {
               <h2 className="mt-1 font-display text-2xl font-semibold text-ink">Failures and findings</h2>
             </div>
           </div>
-          <div className="mt-6 space-y-4">
+          <div className="mt-6 max-h-[520px] space-y-4 overflow-y-auto pr-2">
             {failures.length === 0 ? (
               <p className="text-sm text-slate/70">No failures recorded yet.</p>
             ) : (
@@ -315,14 +325,16 @@ export function RunDetail({ runId }: { runId: string }) {
                 const bugReport = getBugReport(failure.evidence);
                 const linkedStep = failure.step_id ? stepById.get(failure.step_id) ?? null : null;
                 const reportArtifacts = reportArtifactsByFailureId.get(failure.id) ?? [];
+                const failureScreenshots = failure.step_id ? screenshotsByStepId.get(failure.step_id) ?? [] : [];
+                const primaryScreenshot = failureScreenshots[0] ?? null;
                 const displayTitle = bugReport?.title ?? failure.title;
 
                 return (
-                  <article key={failure.id} className="rounded-[24px] border border-rose-200 bg-rose-50/70 p-4">
+                  <article key={failure.id} className="overflow-hidden rounded-[24px] border border-rose-200 bg-rose-50/70 p-4">
                     <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div>
+                      <div className="min-w-0 flex-1">
                         <p className="font-mono text-xs uppercase tracking-[0.22em] text-rose-700/70">{failure.failure_type}</p>
-                        <h3 className="mt-1 font-display text-xl font-semibold text-rose-950">{displayTitle}</h3>
+                        <h3 className="overflow-anywhere mt-1 font-display text-xl font-semibold text-rose-950">{displayTitle}</h3>
                       </div>
                       <div className="flex flex-wrap gap-2">
                         {bugReport?.assessment ? <StatusBadge value={bugReport.assessment} /> : null}
@@ -338,7 +350,7 @@ export function RunDetail({ runId }: { runId: string }) {
 
                     <div className="mt-4 rounded-[22px] border border-rose-200/70 bg-white/80 px-4 py-4">
                       <p className="font-mono text-xs uppercase tracking-[0.22em] text-rose-700/70">ClickUp handoff</p>
-                      <p className="mt-2 font-display text-lg font-semibold text-rose-950">{displayTitle}</p>
+                      <p className="overflow-anywhere mt-2 font-display text-lg font-semibold text-rose-950">{displayTitle}</p>
                       <p className="mt-2 text-sm leading-6 text-rose-950/85">
                         Use this title and the fields below when filing the issue manually for developers.
                       </p>
@@ -359,6 +371,28 @@ export function RunDetail({ runId }: { runId: string }) {
                     {bugReport?.actualResult ? <IssueBlock title="Actual result" value={bugReport.actualResult} /> : null}
                     {bugReport?.expectedResult ? <IssueBlock title="Expected result" value={bugReport.expectedResult} /> : null}
                     {bugReport?.reason ? <IssueBlock title="Why this matters" value={bugReport.reason} /> : null}
+
+                    {primaryScreenshot ? (
+                      <div className="mt-4">
+                        <p className="font-mono text-xs uppercase tracking-[0.22em] text-rose-700/70">Failure screenshot</p>
+                        <a
+                          href={artifactUrl(primaryScreenshot.file_path)}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="mt-3 block overflow-hidden rounded-[22px] border border-rose-200/70 bg-white"
+                        >
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={artifactUrl(primaryScreenshot.file_path)}
+                            alt={primaryScreenshot.file_path}
+                            className="h-64 w-full object-cover object-top"
+                          />
+                          <div className="overflow-anywhere border-t border-rose-100 px-4 py-3 text-sm text-rose-950/80">
+                            {primaryScreenshot.file_path}
+                          </div>
+                        </a>
+                      </div>
+                    ) : null}
 
                     {bugReport?.reproductionSteps.length ? (
                       <div className="mt-4">
@@ -390,7 +424,7 @@ export function RunDetail({ runId }: { runId: string }) {
 
                     <details className="mt-4 rounded-2xl bg-white/70 px-4 py-3">
                       <summary className="cursor-pointer text-sm font-semibold text-rose-950">Raw evidence</summary>
-                      <pre className="mt-3 overflow-x-auto font-mono text-xs leading-6 text-rose-900/80">
+                      <pre className="mt-3 max-w-full overflow-x-auto font-mono text-xs leading-6 text-rose-900/80">
                         {JSON.stringify(stripBugReport(failure.evidence), null, 2)}
                       </pre>
                     </details>
@@ -411,7 +445,8 @@ export function RunDetail({ runId }: { runId: string }) {
               <h2 className="mt-1 font-display text-2xl font-semibold text-ink">Screenshots, traces, and reports</h2>
             </div>
           </div>
-          <div className="mt-6 grid gap-4 md:grid-cols-2">
+          <div className="mt-6 max-h-[520px] overflow-y-auto pr-2">
+            <div className="grid gap-4 md:grid-cols-2">
             {screenshots.length === 0 ? (
               <p className="text-sm text-slate/70">No screenshots captured yet.</p>
             ) : (
@@ -419,13 +454,14 @@ export function RunDetail({ runId }: { runId: string }) {
                 <a key={artifact.id} href={artifactUrl(artifact.file_path)} target="_blank" rel="noreferrer" className="overflow-hidden rounded-[24px] border border-slate/10 bg-sand/50 transition hover:border-slate/20">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img src={artifactUrl(artifact.file_path)} alt={artifact.file_path} className="h-52 w-full object-cover" />
-                  <div className="p-4 text-sm text-slate/75">{artifact.file_path}</div>
+                  <div className="overflow-anywhere p-4 text-sm text-slate/75">{artifact.file_path}</div>
                 </a>
               ))
             )}
+            </div>
           </div>
           {secondaryArtifacts.length > 0 ? (
-            <div className="mt-6 flex flex-wrap gap-3">
+            <div className="mt-6 flex max-h-40 flex-wrap gap-3 overflow-y-auto pr-2">
               {secondaryArtifacts.map((artifact) => (
                 <a key={artifact.id} href={artifactUrl(artifact.file_path)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-full border border-slate/10 bg-white px-4 py-2 text-sm font-semibold text-slate">
                   {artifactLabel(artifact)}
@@ -444,22 +480,22 @@ export function RunDetail({ runId }: { runId: string }) {
               <h2 className="mt-1 font-display text-2xl font-semibold text-ink">Readable Playwright output</h2>
             </div>
           </div>
-          <div className="mt-6 space-y-4">
+          <div className="mt-6 max-h-[520px] space-y-4 overflow-y-auto pr-2">
             {tests.length === 0 ? (
               <p className="text-sm text-slate/70">The worker has not exported any specs for this run yet.</p>
             ) : (
               tests.map((test) => (
-                <article key={test.id} className="rounded-[24px] border border-slate/10 bg-sand/50 p-4">
+                <article key={test.id} className="overflow-hidden rounded-[24px] border border-slate/10 bg-sand/50 p-4">
                   <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div>
+                    <div className="min-w-0 flex-1">
                       <h3 className="font-display text-xl font-semibold text-ink">{test.name}</h3>
-                      <p className="mt-1 text-sm text-slate/70">{test.file_path}</p>
+                      <p className="overflow-anywhere mt-1 text-sm text-slate/70">{test.file_path}</p>
                     </div>
                     <Link href={`/tests/${test.id}`} className="inline-flex items-center gap-2 rounded-full bg-ink px-4 py-2 text-sm font-semibold text-white">
                       View code
                     </Link>
                   </div>
-                  <pre className="mt-4 rounded-2xl bg-ink px-4 py-3 font-mono text-xs leading-6 text-sand">
+                  <pre className="mt-4 overflow-x-auto rounded-2xl bg-ink px-4 py-3 font-mono text-xs leading-6 text-sand">
                     {test.content.split("\n").slice(0, 10).join("\n")}
                   </pre>
                 </article>
@@ -474,9 +510,9 @@ export function RunDetail({ runId }: { runId: string }) {
 
 function KeyStat({ title, value }: { title: string; value: string }) {
   return (
-    <div className="rounded-[22px] border border-slate/10 bg-sand/50 px-4 py-3">
-      <p className="font-mono text-xs uppercase tracking-[0.22em] text-slate/60">{title}</p>
-      <p className="mt-2 font-display text-3xl font-semibold text-ink">{value}</p>
+    <div className="min-w-0 rounded-[22px] border border-slate/10 bg-sand/50 px-4 py-4">
+      <p className="overflow-anywhere font-mono text-[10px] uppercase tracking-[0.18em] text-slate/60">{title}</p>
+      <p className="mt-2 overflow-anywhere font-display text-3xl font-semibold leading-none text-ink">{value}</p>
     </div>
   );
 }
@@ -485,7 +521,7 @@ function InfoPill({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-[22px] border border-slate/10 bg-sand/50 px-4 py-3">
       <p className="font-mono text-xs uppercase tracking-[0.22em] text-slate/60">{label}</p>
-      <p className="mt-1 text-sm font-medium text-slate/80">{value}</p>
+      <p className="overflow-anywhere mt-1 text-sm font-medium text-slate/80">{value}</p>
     </div>
   );
 }
@@ -494,7 +530,7 @@ function IssueField({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-[20px] border border-rose-200/70 bg-white/70 px-4 py-3">
       <p className="font-mono text-xs uppercase tracking-[0.22em] text-rose-700/70">{label}</p>
-      <p className="mt-1 text-sm font-medium text-rose-950/90">{value}</p>
+      <p className="overflow-anywhere mt-1 text-sm font-medium text-rose-950/90">{value}</p>
     </div>
   );
 }

@@ -147,7 +147,7 @@ export function Dashboard() {
             <StatusBadge value={form.safe_mode ? "safe" : "risky"} />
           </div>
 
-          <form className="mt-6 space-y-4" onSubmit={launchRun}>
+          <form className="mt-6 grid gap-4" onSubmit={launchRun}>
             <FormSection
               eyebrow="Scope"
               title="Target and navigation"
@@ -201,7 +201,7 @@ export function Dashboard() {
               title="Execution settings"
               description="Increase the step budget for large menu trees. Safe mode avoids destructive actions while still allowing create/edit form coverage."
             >
-              <div className="grid gap-4 md:grid-cols-[0.7fr_1.3fr]">
+              <div className="grid gap-4 lg:grid-cols-[0.8fr_1.2fr]">
                 <Field label="Max steps">
                   <input type="number" min={1} max={1000} value={form.max_steps} onChange={(event) => setForm({ ...form, max_steps: Number(event.target.value) })} className={inputClass} />
                 </Field>
@@ -289,11 +289,11 @@ export function Dashboard() {
               <EmptyState title="No runs yet" description="Launch the first exploration run to start building coverage and generated tests." />
             ) : (
               runs.map((run) => (
-                <Link key={run.id} href={`/runs/${run.id}`} className="block rounded-[24px] border border-slate/10 bg-sand/50 p-4 transition hover:-translate-y-0.5 hover:border-slate/20 hover:bg-white">
+                <Link key={run.id} href={`/runs/${run.id}`} className="block overflow-hidden rounded-[24px] border border-slate/10 bg-sand/50 p-4 transition hover:-translate-y-0.5 hover:border-slate/20 hover:bg-white">
                   <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div>
+                    <div className="min-w-0 flex-1">
                       <p className="font-display text-lg font-semibold text-ink">{run.config_name}</p>
-                      <p className="mt-1 text-sm text-slate/70">{run.target_url}</p>
+                      <p className="overflow-anywhere mt-1 text-sm text-slate/70">{run.target_url}</p>
                     </div>
                     <StatusBadge value={run.status} />
                   </div>
@@ -318,15 +318,15 @@ export function Dashboard() {
               <EmptyState title="No specs exported yet" description="Successful flows will appear here as readable Playwright files." />
             ) : (
               tests.map((test) => (
-                <Link key={test.id} href={`/tests/${test.id}`} className="block rounded-[24px] border border-slate/10 bg-sand/50 p-4 transition hover:-translate-y-0.5 hover:border-slate/20 hover:bg-white">
+                <Link key={test.id} href={`/tests/${test.id}`} className="block overflow-hidden rounded-[24px] border border-slate/10 bg-sand/50 p-4 transition hover:-translate-y-0.5 hover:border-slate/20 hover:bg-white">
                   <div className="flex items-start justify-between gap-4">
-                    <div>
+                    <div className="min-w-0 flex-1">
                       <p className="font-display text-lg font-semibold text-ink">{test.name}</p>
-                      <p className="mt-1 text-sm text-slate/70">{test.file_path}</p>
+                      <p className="overflow-anywhere mt-1 text-sm text-slate/70">{test.file_path}</p>
                     </div>
                     <StatusBadge value="completed" />
                   </div>
-                  <pre className="mt-4 rounded-2xl bg-ink px-4 py-3 font-mono text-xs leading-6 text-sand">
+                  <pre className="mt-4 overflow-x-auto rounded-2xl bg-ink px-4 py-3 font-mono text-xs leading-6 text-sand">
                     {test.content.split("\n").slice(0, 8).join("\n")}
                   </pre>
                 </Link>
@@ -376,7 +376,7 @@ function FormSection({
   children: React.ReactNode;
 }) {
   return (
-    <div className="rounded-[24px] border border-slate/10 bg-sand/40 px-4 py-4">
+    <div className="rounded-[24px] border border-slate/10 bg-sand/40 px-4 py-5">
       <p className="font-mono text-xs uppercase tracking-[0.22em] text-slate/55">{eyebrow}</p>
       <h3 className="mt-2 font-display text-xl font-semibold text-ink">{title}</h3>
       <p className="mt-2 text-sm leading-6 text-slate/75">{description}</p>
@@ -400,7 +400,7 @@ function WorkflowStep({ step, title, description }: { step: string; title: strin
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <label className="block">
+    <label className="block min-w-0">
       <span className="mb-2 block text-sm font-medium text-slate/80">{label}</span>
       {children}
     </label>
@@ -420,11 +420,27 @@ function Toggle({
     <button
       type="button"
       onClick={() => onChange(!checked)}
-      className="flex items-center justify-between rounded-[22px] border border-slate/10 bg-sand/60 px-4 py-3 text-left"
+      aria-pressed={checked}
+      className={`flex min-h-[76px] items-center justify-between rounded-[22px] border px-4 py-3 text-left transition ${
+        checked
+          ? "border-ink/15 bg-white shadow-sm"
+          : "border-slate/10 bg-sand/60 hover:border-slate/20 hover:bg-white/80"
+      }`}
     >
-      <span className="text-sm font-medium text-slate/80">{label}</span>
-      <span className={`inline-flex h-7 w-14 items-center rounded-full p-1 transition ${checked ? "bg-ink" : "bg-slate/20"}`}>
-        <span className={`h-5 w-5 rounded-full bg-white transition ${checked ? "translate-x-7" : ""}`} />
+      <span className="min-w-0 pr-3">
+        <span className="block text-sm font-semibold text-ink">{label}</span>
+        <span className="mt-1 block text-xs uppercase tracking-[0.18em] text-slate/55">{checked ? "Enabled" : "Disabled"}</span>
+      </span>
+      <span
+        className={`relative inline-flex h-8 w-14 shrink-0 items-center rounded-full p-1 transition ${
+          checked ? "bg-ink" : "bg-slate/20"
+        }`}
+      >
+        <span
+          className={`h-6 w-6 rounded-full bg-white shadow-sm transition-transform ${
+            checked ? "translate-x-6" : "translate-x-0"
+          }`}
+        />
       </span>
     </button>
   );

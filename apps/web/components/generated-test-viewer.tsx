@@ -63,7 +63,7 @@ export function GeneratedTestViewer({ testId }: { testId: string }) {
             <div>
               <p className="font-mono text-xs uppercase tracking-[0.34em] text-slate/60">Generated Playwright spec</p>
               <h1 className="mt-2 font-display text-3xl font-semibold text-ink">{test.name}</h1>
-              <p className="mt-1 text-sm text-slate/70">{test.file_path}</p>
+              <p className="overflow-anywhere mt-1 text-sm text-slate/70">{test.file_path}</p>
             </div>
           </div>
           <div className="flex gap-3">
