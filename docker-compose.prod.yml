@@ -1,0 +1,109 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-autoqa}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-autoqa}"]
+      interval: 10s
+      timeout: 5s
+      retries: 8
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 8
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://postgres:postgres@postgres:5432/autoqa}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      API_PUBLIC_BASE_URL: ${API_PUBLIC_BASE_URL}
+      ARTIFACTS_ROOT: /workspace/artifacts
+      GENERATED_TESTS_ROOT: /workspace/generated-tests
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: >
+      sh -c "cd /workspace/apps/api &&
+      alembic upgrade head &&
+      uvicorn app.main:app --app-dir /workspace/apps/api --host 0.0.0.0 --port 8000"
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ./artifacts:/workspace/artifacts
+      - ./generated-tests:/workspace/generated-tests
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
+      interval: 15s
+      timeout: 10s
+      retries: 8
+
+  worker:
+    build:
+      context: .
+      dockerfile: apps/worker/Dockerfile
+    restart: unless-stopped
+    shm_size: "1gb"
+    env_file:
+      - .env.production
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://postgres:postgres@postgres:5432/autoqa}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      API_PUBLIC_BASE_URL: ${API_PUBLIC_BASE_URL}
+      ARTIFACTS_ROOT: /workspace/artifacts
+      GENERATED_TESTS_ROOT: /workspace/generated-tests
+      PLAYWRIGHT_HEADLESS: ${PLAYWRIGHT_HEADLESS:-true}
+      SAFE_MODE_DEFAULT: ${SAFE_MODE_DEFAULT:-true}
+      WORKER_QUEUE_NAME: ${WORKER_QUEUE_NAME:-autoqa:runs}
+      WORKER_POLL_TIMEOUT: ${WORKER_POLL_TIMEOUT:-3}
+    depends_on:
+      api:
+        condition: service_healthy
+    volumes:
+      - ./artifacts:/workspace/artifacts
+      - ./generated-tests:/workspace/generated-tests
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL}
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:3000:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://localhost:3000').then(() => process.exit(0)).catch(() => process.exit(1))\""]
+      interval: 15s
+      timeout: 10s
+      retries: 8
+
+volumes:
+  postgres-data:
+  redis-data:
