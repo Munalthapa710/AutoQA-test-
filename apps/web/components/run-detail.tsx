@@ -20,6 +20,8 @@ export function RunDetail({ runId }: { runId: string }) {
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);
   const [tests, setTests] = useState<GeneratedTest[]>([]);
   const [isMutating, setIsMutating] = useState(false);
+  const [feedback, setFeedback] = useState<string | null>(null);
+  const [confirmAction, setConfirmAction] = useState<"stop" | "delete" | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -114,6 +116,7 @@ export function RunDetail({ runId }: { runId: string }) {
     }
     setIsMutating(true);
     setError(null);
+    setFeedback(runActionMessage(action, "pending"));
     try {
       if (action === "pause") {
         const nextRun = await api.pauseRun(run.id);
@@ -127,9 +130,12 @@ export function RunDetail({ runId }: { runId: string }) {
       } else {
         await api.deleteRun(run.id);
         router.push("/");
+        return;
       }
+      setFeedback(runActionMessage(action, "done"));
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : "Failed to update run.");
+      setFeedback(null);
     } finally {
       setIsMutating(false);
     }
@@ -191,6 +197,12 @@ export function RunDetail({ runId }: { runId: string }) {
           </div>
 
           {run.error_message ? <p className="mt-4 rounded-2xl bg-rose-50 px-4 py-3 text-sm text-rose-700">{run.error_message}</p> : null}
+          {feedback ? (
+            <p aria-live="polite" className="mt-4 rounded-2xl bg-cyan-50 px-4 py-3 text-sm text-cyan-900">
+              {feedback}
+            </p>
+          ) : null}
+          {runDetailStatusMessage(run) ? <p className="mt-4 rounded-2xl bg-white/80 px-4 py-3 text-sm text-slate/80">{runDetailStatusMessage(run)}</p> : null}
 
           <div className="mt-6 flex flex-wrap gap-3">
             <a href={run.config.target_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-full bg-ink px-5 py-3 text-sm font-semibold text-white">
@@ -200,25 +212,25 @@ export function RunDetail({ runId }: { runId: string }) {
             {run.status === "running" ? (
               <ActionButton disabled={isMutating} onClick={() => void handleRunAction("pause")}>
                 <Pause className="h-4 w-4" />
-                Pause run
+                {isMutating ? "Pausing..." : "Pause run"}
               </ActionButton>
             ) : null}
             {run.status === "paused" ? (
               <ActionButton disabled={isMutating} onClick={() => void handleRunAction("resume")}>
                 <Play className="h-4 w-4" />
-                Resume run
+                {isMutating ? "Resuming..." : "Resume run"}
               </ActionButton>
             ) : null}
             {["queued", "running", "paused"].includes(run.status) ? (
-              <ActionButton disabled={isMutating} onClick={() => void handleRunAction("stop")}>
+              <ActionButton disabled={isMutating} onClick={() => setConfirmAction("stop")}>
                 <Square className="h-4 w-4" />
-                Stop run
+                {isMutating ? "Stopping..." : "Stop run"}
               </ActionButton>
             ) : null}
             {!["queued", "running", "paused"].includes(run.status) ? (
-              <ActionButton disabled={isMutating} onClick={() => void handleRunAction("delete")}>
+              <ActionButton disabled={isMutating} onClick={() => setConfirmAction("delete")}>
                 <Trash2 className="h-4 w-4" />
-                Delete run
+                {isMutating ? "Deleting..." : "Delete run"}
               </ActionButton>
             ) : null}
             <Link href="/" className="inline-flex items-center gap-2 rounded-full border border-slate/10 bg-white px-5 py-3 text-sm font-semibold text-slate">
@@ -555,6 +567,24 @@ export function RunDetail({ runId }: { runId: string }) {
           </div>
         </Panel>
       </section>
+      {confirmAction ? (
+        <ConfirmDialog
+          title={confirmAction === "stop" ? "Stop this run?" : "Delete this run?"}
+          description={
+            confirmAction === "stop"
+              ? "The worker will stop this run at the next safe checkpoint."
+              : "This run and its recorded history will be removed from the dashboard."
+          }
+          confirmLabel={confirmAction === "stop" ? "Stop run" : "Delete run"}
+          busy={isMutating}
+          onCancel={() => setConfirmAction(null)}
+          onConfirm={async () => {
+            const nextAction = confirmAction;
+            setConfirmAction(null);
+            await handleRunAction(nextAction);
+          }}
+        />
+      ) : null}
     </main>
   );
 }
@@ -578,6 +608,77 @@ function ActionButton({
       {children}
     </button>
   );
+}
+
+function ConfirmDialog({
+  title,
+  description,
+  confirmLabel,
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  title: string;
+  description: string;
+  confirmLabel: string;
+  busy?: boolean;
+  onCancel: () => void;
+  onConfirm: () => void | Promise<void>;
+}) {
+  return (
+    <div aria-modal="true" role="dialog" className="fixed inset-0 z-50 flex items-center justify-center bg-ink/45 px-4">
+      <div className="w-full max-w-md rounded-[28px] border border-slate/10 bg-white p-6 shadow-2xl">
+        <p className="font-mono text-xs uppercase tracking-[0.26em] text-slate/55">Confirm action</p>
+        <h3 className="mt-3 font-display text-2xl font-semibold text-ink">{title}</h3>
+        <p className="mt-3 text-sm leading-6 text-slate/75">{description}</p>
+        <div className="mt-6 flex flex-wrap gap-3">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={busy}
+            className="inline-flex items-center gap-2 rounded-full border border-slate/10 bg-sand/60 px-4 py-2 text-sm font-semibold text-slate transition hover:border-slate/20 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={() => void onConfirm()}
+            disabled={busy}
+            className="inline-flex items-center gap-2 rounded-full bg-ink px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {busy ? "Working..." : confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function runActionMessage(action: "pause" | "resume" | "stop" | "delete", phase: "pending" | "done"): string {
+  const messages = {
+    pause: { pending: "Pause requested. The run will wait at the next safe checkpoint.", done: "Run paused." },
+    resume: { pending: "Resuming run...", done: "Run resumed." },
+    stop: { pending: "Stop requested. The run will stop at the next safe checkpoint.", done: "Run stopped." },
+    delete: { pending: "Deleting run...", done: "Run deleted." },
+  };
+  return messages[action][phase];
+}
+
+function runDetailStatusMessage(run: RunDetailType): string | null {
+  if (run.status === "paused") {
+    return "Paused by user. Resume to continue from the current checkpoint.";
+  }
+  if (run.status === "running") {
+    return "Run is actively exploring the app.";
+  }
+  if (run.status === "queued") {
+    return "Run is waiting for the worker to pick it up.";
+  }
+  if (run.status === "stopped") {
+    return run.error_message ? null : "Stopped by user.";
+  }
+  const statusNote = typeof run.summary.status_note === "string" ? run.summary.status_note : null;
+  return statusNote;
 }
 
 function KeyStat({ title, value }: { title: string; value: string }) {

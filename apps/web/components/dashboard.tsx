@@ -51,6 +51,13 @@ export function Dashboard() {
   const [isLaunching, setIsLaunching] = useState(false);
   const [busyRunId, setBusyRunId] = useState<string | null>(null);
   const [isClearingHistory, setIsClearingHistory] = useState(false);
+  const [feedback, setFeedback] = useState<string | null>(null);
+  const [confirmAction, setConfirmAction] = useState<
+    | { type: "stop"; run: RunListItem }
+    | { type: "delete"; run: RunListItem }
+    | { type: "clear-history" }
+    | null
+  >(null);
   const [error, setError] = useState<string | null>(null);
 
   async function loadDashboard() {
@@ -98,6 +105,7 @@ export function Dashboard() {
     event.preventDefault();
     setIsLaunching(true);
     setError(null);
+    setFeedback(null);
 
     try {
       const created = await api.createConfig({
@@ -126,6 +134,7 @@ export function Dashboard() {
   async function handleRunAction(run: RunListItem, action: "pause" | "resume" | "stop" | "delete") {
     setBusyRunId(run.id);
     setError(null);
+    setFeedback(actionMessage(action, "pending"));
     try {
       if (action === "pause") {
         await api.pauseRun(run.id);
@@ -137,8 +146,10 @@ export function Dashboard() {
         await api.deleteRun(run.id);
       }
       await loadDashboard();
+      setFeedback(actionMessage(action, "done"));
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : "Failed to update run.");
+      setFeedback(null);
     } finally {
       setBusyRunId(null);
     }
@@ -147,11 +158,14 @@ export function Dashboard() {
   async function handleClearHistory() {
     setIsClearingHistory(true);
     setError(null);
+    setFeedback("Clearing recent session history...");
     try {
-      await api.clearRunHistory();
+      const result = await api.clearRunHistory();
       await loadDashboard();
+      setFeedback(result.deleted_runs > 0 ? `Deleted ${result.deleted_runs} inactive run${result.deleted_runs === 1 ? "" : "s"}.` : "There was no inactive history to clear.");
     } catch (clearError) {
       setError(clearError instanceof Error ? clearError.message : "Failed to clear history.");
+      setFeedback(null);
     } finally {
       setIsClearingHistory(false);
     }
@@ -255,6 +269,11 @@ export function Dashboard() {
             </FormSection>
 
             {error ? <p className="rounded-2xl bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</p> : null}
+            {feedback ? (
+              <p aria-live="polite" className="rounded-2xl bg-cyan-50 px-4 py-3 text-sm text-cyan-900">
+                {feedback}
+              </p>
+            ) : null}
 
             <div className="rounded-[22px] border border-slate/10 bg-sand/50 px-4 py-4 text-sm leading-6 text-slate/80">
               AutoQA will:
@@ -327,7 +346,7 @@ export function Dashboard() {
             </div>
             <button
               type="button"
-              onClick={handleClearHistory}
+              onClick={() => setConfirmAction({ type: "clear-history" })}
               disabled={isClearingHistory || runs.every((run) => ["queued", "running", "paused"].includes(run.status))}
               className="inline-flex items-center gap-2 rounded-full border border-slate/10 bg-white px-4 py-2 text-sm font-semibold text-slate transition hover:border-slate/20 disabled:cursor-not-allowed disabled:opacity-50"
             >
@@ -353,6 +372,9 @@ export function Dashboard() {
                     <span>Max steps {run.max_steps}</span>
                     <span>Failures {String((run.summary.failure_count as number | undefined) ?? 0)}</span>
                   </div>
+                  {runStatusMessage(run) ? (
+                    <p className="mt-4 rounded-2xl bg-white/80 px-4 py-3 text-sm text-slate/80">{runStatusMessage(run)}</p>
+                  ) : null}
                   <div className="mt-4 flex flex-wrap gap-2">
                     <Link href={`/runs/${run.id}`} className="inline-flex items-center gap-2 rounded-full bg-ink px-4 py-2 text-sm font-semibold text-white">
                       Open
@@ -360,7 +382,7 @@ export function Dashboard() {
                     {run.status === "running" ? (
                       <RunActionButton
                         icon={<Pause className="h-4 w-4" />}
-                        label="Pause"
+                        label={busyRunId === run.id ? "Pausing..." : "Pause"}
                         disabled={busyRunId === run.id}
                         onClick={() => void handleRunAction(run, "pause")}
                       />
@@ -368,7 +390,7 @@ export function Dashboard() {
                     {run.status === "paused" ? (
                       <RunActionButton
                         icon={<Play className="h-4 w-4" />}
-                        label="Resume"
+                        label={busyRunId === run.id ? "Resuming..." : "Resume"}
                         disabled={busyRunId === run.id}
                         onClick={() => void handleRunAction(run, "resume")}
                       />
@@ -376,17 +398,17 @@ export function Dashboard() {
                     {["queued", "running", "paused"].includes(run.status) ? (
                       <RunActionButton
                         icon={<Square className="h-4 w-4" />}
-                        label="Stop"
+                        label={busyRunId === run.id ? "Stopping..." : "Stop"}
                         disabled={busyRunId === run.id}
-                        onClick={() => void handleRunAction(run, "stop")}
+                        onClick={() => setConfirmAction({ type: "stop", run })}
                       />
                     ) : null}
                     {!["queued", "running", "paused"].includes(run.status) ? (
                       <RunActionButton
                         icon={<Trash2 className="h-4 w-4" />}
-                        label="Delete"
+                        label={busyRunId === run.id ? "Deleting..." : "Delete"}
                         disabled={busyRunId === run.id}
-                        onClick={() => void handleRunAction(run, "delete")}
+                        onClick={() => setConfirmAction({ type: "delete", run })}
                       />
                     ) : null}
                   </div>
@@ -423,6 +445,24 @@ export function Dashboard() {
           </div>
         </Panel>
       </section>
+      {confirmAction ? (
+        <ConfirmDialog
+          title={confirmTitle(confirmAction)}
+          description={confirmDescription(confirmAction)}
+          confirmLabel={confirmButtonLabel(confirmAction)}
+          busy={isClearingHistory || (confirmAction.type !== "clear-history" && busyRunId === confirmAction.run.id)}
+          onCancel={() => setConfirmAction(null)}
+          onConfirm={async () => {
+            const pending = confirmAction;
+            setConfirmAction(null);
+            if (pending.type === "clear-history") {
+              await handleClearHistory();
+              return;
+            }
+            await handleRunAction(pending.run, pending.type);
+          }}
+        />
+      ) : null}
     </main>
   );
 }
@@ -565,6 +605,122 @@ function RunActionButton({
       {label}
     </button>
   );
+}
+
+function ConfirmDialog({
+  title,
+  description,
+  confirmLabel,
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  title: string;
+  description: string;
+  confirmLabel: string;
+  busy?: boolean;
+  onCancel: () => void;
+  onConfirm: () => void | Promise<void>;
+}) {
+  return (
+    <div aria-modal="true" role="dialog" className="fixed inset-0 z-50 flex items-center justify-center bg-ink/45 px-4">
+      <div className="w-full max-w-md rounded-[28px] border border-slate/10 bg-white p-6 shadow-2xl">
+        <p className="font-mono text-xs uppercase tracking-[0.26em] text-slate/55">Confirm action</p>
+        <h3 className="mt-3 font-display text-2xl font-semibold text-ink">{title}</h3>
+        <p className="mt-3 text-sm leading-6 text-slate/75">{description}</p>
+        <div className="mt-6 flex flex-wrap gap-3">
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={busy}
+            className="inline-flex items-center gap-2 rounded-full border border-slate/10 bg-sand/60 px-4 py-2 text-sm font-semibold text-slate transition hover:border-slate/20 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={() => void onConfirm()}
+            disabled={busy}
+            className="inline-flex items-center gap-2 rounded-full bg-ink px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {busy ? "Working..." : confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function runStatusMessage(run: RunListItem): string | null {
+  if (run.status === "paused") {
+    return "Paused by user. Resume to continue from the current checkpoint.";
+  }
+  if (run.status === "running") {
+    return "Run is actively exploring the app.";
+  }
+  if (run.status === "queued") {
+    return "Run is waiting for the worker to pick it up.";
+  }
+  if (run.status === "stopped") {
+    return run.error_message || "Stopped by user.";
+  }
+  const statusNote = typeof run.summary.status_note === "string" ? run.summary.status_note : null;
+  return statusNote;
+}
+
+function actionMessage(action: "pause" | "resume" | "stop" | "delete", phase: "pending" | "done"): string {
+  const messages = {
+    pause: { pending: "Pausing run...", done: "Run paused." },
+    resume: { pending: "Resuming run...", done: "Run resumed." },
+    stop: { pending: "Stopping run...", done: "Run stopped." },
+    delete: { pending: "Deleting run...", done: "Run deleted." },
+  };
+  return messages[action][phase];
+}
+
+function confirmTitle(
+  action:
+    | { type: "stop"; run: RunListItem }
+    | { type: "delete"; run: RunListItem }
+    | { type: "clear-history" },
+): string {
+  if (action.type === "stop") {
+    return "Stop this run?";
+  }
+  if (action.type === "delete") {
+    return "Delete this run?";
+  }
+  return "Clear inactive history?";
+}
+
+function confirmDescription(
+  action:
+    | { type: "stop"; run: RunListItem }
+    | { type: "delete"; run: RunListItem }
+    | { type: "clear-history" },
+): string {
+  if (action.type === "stop") {
+    return `The run "${action.run.config_name}" will stop at the next safe checkpoint.`;
+  }
+  if (action.type === "delete") {
+    return `The run "${action.run.config_name}" and its recorded history will be removed from the dashboard.`;
+  }
+  return "All completed, failed, and stopped runs will be removed from recent session history.";
+}
+
+function confirmButtonLabel(
+  action:
+    | { type: "stop"; run: RunListItem }
+    | { type: "delete"; run: RunListItem }
+    | { type: "clear-history" },
+): string {
+  if (action.type === "stop") {
+    return "Stop run";
+  }
+  if (action.type === "delete") {
+    return "Delete run";
+  }
+  return "Clear history";
 }
 
 const inputClass =
