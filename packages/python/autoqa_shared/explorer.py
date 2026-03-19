@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urljoin, urlparse
@@ -60,6 +61,7 @@ class ExplorationEngine:
             "submitted_forms": set(),
             "discovered_urls": set(),
             "visited_urls": set(),
+            "sampled_action_groups": {},
             "navigation_stack": [],
             "home_url": self._normalized_url(config.target_url).geturl(),
             "seen_console_count": 0,
@@ -362,6 +364,8 @@ class ExplorationEngine:
         details["form_scenario"] = action.get("form_scenario")
         details["form_variant_key"] = action.get("form_variant_key")
         details["form_label"] = action.get("form_label")
+        details["sample_group"] = action.get("sample_group")
+        details["sample_total"] = action.get("sample_total")
         details["before_page_state"] = before_page_state
         details["after_page_state"] = after_page_state
 
@@ -399,6 +403,8 @@ class ExplorationEngine:
         executed_action = dict(action)
         executed_action.update({"pre_url": pre_url, "post_url": page.url, "status": status})
         state["last_action"] = executed_action
+        if action.get("sample_group") and action.get("sample_total", 0) > 1:
+            state["sampled_action_groups"][action["sample_group"]] = state["sampled_action_groups"].get(action["sample_group"], 0) + 1
 
         pre_url_normalized = self._normalized_url(pre_url).geturl()
         post_url_normalized = self._normalized_url(page.url).geturl()
@@ -542,12 +548,14 @@ class ExplorationEngine:
         visited_urls: set[str] = state["visited_urls"]
         attempted_form_variants: set[str] = state["attempted_form_variants"]
         submitted_forms: set[str] = state["submitted_forms"]
+        sampled_action_groups: dict[str, int] = state.get("sampled_action_groups", {})
         navigation_stack: list[str] = state["navigation_stack"]
         home_url = normalize_text(state.get("home_url"))
         safe_mode = state["run"].safe_mode
         candidates: list[dict[str, Any]] = []
         pending_submit_controls: list[dict[str, Any]] = []
         active_form_variants = self._active_form_variants(elements, current_path, attempted_form_variants)
+        sample_group_counts = self._sample_group_counts(current_path, elements)
 
         for element in elements:
             if element.get("disabled"):
@@ -734,6 +742,10 @@ class ExplorationEngine:
                     current_path,
                     navigation_hint=bool(href) or element.get("role") in {"link", "tab", "menuitem"},
                 )
+                sample_group = self._sample_group_for_element(current_path, element, category)
+                sample_total = sample_group_counts.get(sample_group, 0) if sample_group else 0
+                if self._should_skip_due_to_sampling(sample_group, sample_group_counts, sampled_action_groups):
+                    continue
                 action_key = self._action_key(current_path, "click", label, category, scope=scenario_scope)
                 if not self._can_queue_action(
                     action_key=action_key,
@@ -760,6 +772,8 @@ class ExplorationEngine:
                         "form_scenario": form_scenario,
                         "form_variant_key": form_variant_key,
                         "form_label": normalize_text(element.get("formLabel")) or label or "form",
+                        "sample_group": sample_group,
+                        "sample_total": sample_total,
                     }
                 )
 
@@ -785,6 +799,10 @@ class ExplorationEngine:
                 if submit_category == "filter"
                 else pending["risk"] if pending["risk"] != RiskLevel.SAFE.value else RiskLevel.RISKY.value
             )
+            sample_group = self._sample_group_for_submit(current_path, pending)
+            sample_total = sample_group_counts.get(sample_group, 0) if sample_group else 0
+            if self._should_skip_due_to_sampling(sample_group, sample_group_counts, sampled_action_groups):
+                continue
             action_key = self._action_key(
                 current_path,
                 "submit",
@@ -823,6 +841,8 @@ class ExplorationEngine:
                     "form_variant_key": form_variant_key,
                     "form_label": pending.get("form_label"),
                     "submits_form": True,
+                    "sample_group": sample_group,
+                    "sample_total": sample_total,
                 }
             )
 
@@ -1375,6 +1395,72 @@ class ExplorationEngine:
         if scenario == "boundary_date":
             return "The form submission did not show the expected feedback for an out-of-range or edge-case date value."
         return "The form submission did not show the expected validation feedback for an intentionally invalid scenario."
+
+    def _sample_group_counts(self, path: str, elements: list[dict[str, Any]]) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for element in elements:
+            if element.get("disabled"):
+                continue
+            category = element.get("category") or infer_category(
+                normalize_text(element.get("displayLabel")),
+                element.get("href"),
+            )
+            for sample_group in (
+                self._sample_group_for_element(path, element, category),
+                self._sample_group_for_submit(path, element),
+            ):
+                if sample_group:
+                    counts[sample_group] = counts.get(sample_group, 0) + 1
+        return counts
+
+    def _sample_group_for_element(self, path: str, element: dict[str, Any], category: str) -> str | None:
+        if self._form_signature(path, element):
+            return None
+        if category not in {"create", "edit", "view"}:
+            return None
+        tag = normalize_text(element.get("tag")).lower() or "element"
+        role = normalize_text(element.get("role")).lower() or tag
+        label_stem = self._sampling_label_stem(normalize_text(element.get("displayLabel")), category)
+        return f"{path}|sample|{category}|{tag}|{role}|{label_stem}"
+
+    def _sample_group_for_submit(self, path: str, pending: dict[str, Any]) -> str | None:
+        form_signature = pending.get("form_signature") or self._form_signature(path, pending)
+        if not form_signature:
+            return None
+        if not pending.get("isSubmitControl") and not pending.get("element"):
+            return None
+        label_stem = self._sampling_label_stem(
+            normalize_text(pending.get("form_label") or pending.get("label") or pending.get("displayLabel")),
+            "form",
+        )
+        return f"{path}|sample|submit|{normalize_text(form_signature).lower()}|{label_stem}"
+
+    def _sampling_label_stem(self, label: str, category: str) -> str:
+        tokens = [token for token in re.split(r"[^a-z0-9]+", normalize_text(label).lower()) if token]
+        if not tokens:
+            return category
+        preferred_tokens = {
+            "create": {"create", "new", "add"},
+            "edit": {"edit", "update"},
+            "view": {"view", "open", "details"},
+            "form": {"submit", "save", "apply", "search", "filter"},
+        }
+        for token in tokens:
+            if token in preferred_tokens.get(category, set()):
+                return token
+        return " ".join(tokens[:2])
+
+    def _should_skip_due_to_sampling(
+        self,
+        sample_group: str | None,
+        sample_group_counts: dict[str, int],
+        sampled_action_groups: dict[str, int],
+    ) -> bool:
+        if not sample_group:
+            return False
+        if sample_group_counts.get(sample_group, 0) <= 1:
+            return False
+        return sampled_action_groups.get(sample_group, 0) >= 1
 
     def _describe_form_feedback(self, feedback: dict[str, Any]) -> str:
         error_messages = [normalize_text(message) for message in feedback.get("errorMessages", []) if normalize_text(message)]
@@ -2053,9 +2139,13 @@ class ExplorationEngine:
             "discovered_url_count": len(state.get("discovered_urls", set())),
             "visited_url_count": len(state.get("visited_urls", set())),
             "bug_report_count": failure_count,
+            "sampled_action_group_count": len(state.get("sampled_action_groups", {})),
+            "sampled_action_count": sum(state.get("sampled_action_groups", {}).values()),
         }
         if failure_count and run.status == RunStatus.COMPLETED.value:
             summary["status_note"] = "Completed with findings"
+        elif summary["sampled_action_group_count"]:
+            summary["status_note"] = "Completed with sampled repeated page actions"
         run.summary = summary
         run.ended_at = utcnow()
         self.db.commit()
