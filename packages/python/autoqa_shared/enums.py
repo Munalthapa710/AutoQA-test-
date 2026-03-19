@@ -10,6 +10,7 @@ except ImportError:
 class RunStatus(StrEnum):
     QUEUED = "queued"
     RUNNING = "running"
+    PAUSED = "paused"
     COMPLETED = "completed"
     FAILED = "failed"
     STOPPED = "stopped"

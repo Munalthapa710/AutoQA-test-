@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { formatDistanceToNow } from "date-fns";
-import { ArrowRight, Beaker, History, Play, Sparkles } from "lucide-react";
+import { ArrowRight, Beaker, History, Pause, Play, Sparkles, Square, Trash2 } from "lucide-react";
 
 import { api } from "../lib/api";
 import type { GeneratedTest, RunListItem } from "../lib/types";
@@ -49,7 +49,15 @@ export function Dashboard() {
   const [tests, setTests] = useState<GeneratedTest[]>([]);
   const [form, setForm] = useState<ConfigFormState>(DEFAULT_FORM);
   const [isLaunching, setIsLaunching] = useState(false);
+  const [busyRunId, setBusyRunId] = useState<string | null>(null);
+  const [isClearingHistory, setIsClearingHistory] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  async function loadDashboard() {
+    const [runData, testData] = await Promise.all([api.listRuns(), api.listGeneratedTests()]);
+    setRuns(runData);
+    setTests(testData.slice(0, 6));
+  }
 
   useEffect(() => {
     let active = true;
@@ -112,6 +120,40 @@ export function Dashboard() {
       setError(launchError instanceof Error ? launchError.message : "Failed to launch run.");
     } finally {
       setIsLaunching(false);
+    }
+  }
+
+  async function handleRunAction(run: RunListItem, action: "pause" | "resume" | "stop" | "delete") {
+    setBusyRunId(run.id);
+    setError(null);
+    try {
+      if (action === "pause") {
+        await api.pauseRun(run.id);
+      } else if (action === "resume") {
+        await api.resumeRun(run.id);
+      } else if (action === "stop") {
+        await api.stopRun(run.id);
+      } else {
+        await api.deleteRun(run.id);
+      }
+      await loadDashboard();
+    } catch (actionError) {
+      setError(actionError instanceof Error ? actionError.message : "Failed to update run.");
+    } finally {
+      setBusyRunId(null);
+    }
+  }
+
+  async function handleClearHistory() {
+    setIsClearingHistory(true);
+    setError(null);
+    try {
+      await api.clearRunHistory();
+      await loadDashboard();
+    } catch (clearError) {
+      setError(clearError instanceof Error ? clearError.message : "Failed to clear history.");
+    } finally {
+      setIsClearingHistory(false);
     }
   }
 
@@ -283,18 +325,27 @@ export function Dashboard() {
               <p className="font-mono text-xs uppercase tracking-[0.34em] text-slate/60">Run history</p>
               <h2 className="mt-2 font-display text-2xl font-semibold text-ink">Recent sessions</h2>
             </div>
+            <button
+              type="button"
+              onClick={handleClearHistory}
+              disabled={isClearingHistory || runs.every((run) => ["queued", "running", "paused"].includes(run.status))}
+              className="inline-flex items-center gap-2 rounded-full border border-slate/10 bg-white px-4 py-2 text-sm font-semibold text-slate transition hover:border-slate/20 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Trash2 className="h-4 w-4" />
+              {isClearingHistory ? "Clearing..." : "Clear history"}
+            </button>
           </div>
           <div className="mt-6 space-y-4">
             {runs.length === 0 ? (
               <EmptyState title="No runs yet" description="Launch the first exploration run to start building coverage and generated tests." />
             ) : (
               runs.map((run) => (
-                <Link key={run.id} href={`/runs/${run.id}`} className="block overflow-hidden rounded-[24px] border border-slate/10 bg-sand/50 p-4 transition hover:-translate-y-0.5 hover:border-slate/20 hover:bg-white">
+                <article key={run.id} className="overflow-hidden rounded-[24px] border border-slate/10 bg-sand/50 p-4 transition hover:border-slate/20 hover:bg-white">
                   <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div className="min-w-0 flex-1">
+                    <Link href={`/runs/${run.id}`} className="min-w-0 flex-1">
                       <p className="font-display text-lg font-semibold text-ink">{run.config_name}</p>
                       <p className="overflow-anywhere mt-1 text-sm text-slate/70">{run.target_url}</p>
-                    </div>
+                    </Link>
                     <StatusBadge value={run.status} />
                   </div>
                   <div className="mt-4 grid gap-3 text-sm text-slate/75 sm:grid-cols-3">
@@ -302,7 +353,44 @@ export function Dashboard() {
                     <span>Max steps {run.max_steps}</span>
                     <span>Failures {String((run.summary.failure_count as number | undefined) ?? 0)}</span>
                   </div>
-                </Link>
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <Link href={`/runs/${run.id}`} className="inline-flex items-center gap-2 rounded-full bg-ink px-4 py-2 text-sm font-semibold text-white">
+                      Open
+                    </Link>
+                    {run.status === "running" ? (
+                      <RunActionButton
+                        icon={<Pause className="h-4 w-4" />}
+                        label="Pause"
+                        disabled={busyRunId === run.id}
+                        onClick={() => void handleRunAction(run, "pause")}
+                      />
+                    ) : null}
+                    {run.status === "paused" ? (
+                      <RunActionButton
+                        icon={<Play className="h-4 w-4" />}
+                        label="Resume"
+                        disabled={busyRunId === run.id}
+                        onClick={() => void handleRunAction(run, "resume")}
+                      />
+                    ) : null}
+                    {["queued", "running", "paused"].includes(run.status) ? (
+                      <RunActionButton
+                        icon={<Square className="h-4 w-4" />}
+                        label="Stop"
+                        disabled={busyRunId === run.id}
+                        onClick={() => void handleRunAction(run, "stop")}
+                      />
+                    ) : null}
+                    {!["queued", "running", "paused"].includes(run.status) ? (
+                      <RunActionButton
+                        icon={<Trash2 className="h-4 w-4" />}
+                        label="Delete"
+                        disabled={busyRunId === run.id}
+                        onClick={() => void handleRunAction(run, "delete")}
+                      />
+                    ) : null}
+                  </div>
+                </article>
               ))
             )}
           </div>
@@ -452,6 +540,30 @@ function EmptyState({ title, description }: { title: string; description: string
       <p className="font-display text-xl font-semibold text-ink">{title}</p>
       <p className="mt-2 text-sm text-slate/75">{description}</p>
     </div>
+  );
+}
+
+function RunActionButton({
+  icon,
+  label,
+  disabled,
+  onClick,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      className="inline-flex items-center gap-2 rounded-full border border-slate/10 bg-white px-4 py-2 text-sm font-semibold text-slate transition hover:border-slate/20 disabled:cursor-not-allowed disabled:opacity-50"
+    >
+      {icon}
+      {label}
+    </button>
   );
 }
 

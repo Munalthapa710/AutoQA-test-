@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { formatDistanceToNow } from "date-fns";
-import { ExternalLink, FileCode2, Image as ImageIcon, Link2, ScrollText, TriangleAlert } from "lucide-react";
+import { ExternalLink, FileCode2, Image as ImageIcon, Link2, Pause, Play, ScrollText, Square, Trash2, TriangleAlert } from "lucide-react";
 
 import { api, artifactUrl, generatedTestFileUrl } from "../lib/api";
 import type { Artifact, DiscoveredFlow, FailureReport, GeneratedTest, RunDetail as RunDetailType, RunStep } from "../lib/types";
@@ -11,12 +12,14 @@ import { Panel } from "./panel";
 import { StatusBadge } from "./status-badge";
 
 export function RunDetail({ runId }: { runId: string }) {
+  const router = useRouter();
   const [run, setRun] = useState<RunDetailType | null>(null);
   const [steps, setSteps] = useState<RunStep[]>([]);
   const [flows, setFlows] = useState<DiscoveredFlow[]>([]);
   const [failures, setFailures] = useState<FailureReport[]>([]);
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);
   const [tests, setTests] = useState<GeneratedTest[]>([]);
+  const [isMutating, setIsMutating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -50,7 +53,7 @@ export function RunDetail({ runId }: { runId: string }) {
 
     void load();
     const interval = window.setInterval(() => {
-      if (run?.status === "completed" || run?.status === "failed") {
+      if (run?.status === "completed" || run?.status === "failed" || run?.status === "stopped") {
         return;
       }
       void load();
@@ -104,6 +107,33 @@ export function RunDetail({ runId }: { runId: string }) {
       bugReports: getNumber(runSummary?.bug_report_count) ?? failures.length,
     };
   }, [failures.length, run?.summary]);
+
+  async function handleRunAction(action: "pause" | "resume" | "stop" | "delete") {
+    if (!run) {
+      return;
+    }
+    setIsMutating(true);
+    setError(null);
+    try {
+      if (action === "pause") {
+        const nextRun = await api.pauseRun(run.id);
+        setRun({ ...run, ...nextRun });
+      } else if (action === "resume") {
+        const nextRun = await api.resumeRun(run.id);
+        setRun({ ...run, ...nextRun });
+      } else if (action === "stop") {
+        const nextRun = await api.stopRun(run.id);
+        setRun({ ...run, ...nextRun });
+      } else {
+        await api.deleteRun(run.id);
+        router.push("/");
+      }
+    } catch (actionError) {
+      setError(actionError instanceof Error ? actionError.message : "Failed to update run.");
+    } finally {
+      setIsMutating(false);
+    }
+  }
 
   if (error) {
     return (
@@ -167,6 +197,30 @@ export function RunDetail({ runId }: { runId: string }) {
               Open target
               <ExternalLink className="h-4 w-4" />
             </a>
+            {run.status === "running" ? (
+              <ActionButton disabled={isMutating} onClick={() => void handleRunAction("pause")}>
+                <Pause className="h-4 w-4" />
+                Pause run
+              </ActionButton>
+            ) : null}
+            {run.status === "paused" ? (
+              <ActionButton disabled={isMutating} onClick={() => void handleRunAction("resume")}>
+                <Play className="h-4 w-4" />
+                Resume run
+              </ActionButton>
+            ) : null}
+            {["queued", "running", "paused"].includes(run.status) ? (
+              <ActionButton disabled={isMutating} onClick={() => void handleRunAction("stop")}>
+                <Square className="h-4 w-4" />
+                Stop run
+              </ActionButton>
+            ) : null}
+            {!["queued", "running", "paused"].includes(run.status) ? (
+              <ActionButton disabled={isMutating} onClick={() => void handleRunAction("delete")}>
+                <Trash2 className="h-4 w-4" />
+                Delete run
+              </ActionButton>
+            ) : null}
             <Link href="/" className="inline-flex items-center gap-2 rounded-full border border-slate/10 bg-white px-5 py-3 text-sm font-semibold text-slate">
               Back to dashboard
               <Link2 className="h-4 w-4" />
@@ -502,6 +556,27 @@ export function RunDetail({ runId }: { runId: string }) {
         </Panel>
       </section>
     </main>
+  );
+}
+
+function ActionButton({
+  children,
+  disabled,
+  onClick,
+}: {
+  children: React.ReactNode;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      className="inline-flex items-center gap-2 rounded-full border border-slate/10 bg-white px-5 py-3 text-sm font-semibold text-slate transition hover:border-slate/20 disabled:cursor-not-allowed disabled:opacity-50"
+    >
+      {children}
+    </button>
   );
 }
 

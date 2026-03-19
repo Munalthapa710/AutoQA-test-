@@ -3,8 +3,10 @@ import { cn } from "../lib/cn";
 const toneByStatus: Record<string, string> = {
   queued: "bg-slate/10 text-slate",
   running: "bg-mist text-slate",
+  paused: "bg-amber-100 text-amber-800",
   completed: "bg-emerald-100 text-emerald-800",
   failed: "bg-rose-100 text-rose-800",
+  stopped: "bg-slate/15 text-slate",
   passed: "bg-emerald-100 text-emerald-800",
   safe: "bg-emerald-100 text-emerald-800",
   risky: "bg-amber-100 text-amber-800",

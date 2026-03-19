@@ -3,6 +3,7 @@
 .venv
 .pydeps
 .tmp
+.runtime
 node_modules
 artifacts
 generated-tests

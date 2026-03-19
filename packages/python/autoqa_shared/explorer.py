@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from datetime import datetime, timezone
@@ -27,6 +28,10 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+class RunStoppedError(RuntimeError):
+    pass
+
+
 class ExplorationEngine:
     def __init__(self, db: Session) -> None:
         self.db = db
@@ -41,9 +46,14 @@ class ExplorationEngine:
         config = self.db.get(TestConfig, run.config_id)
         if config is None:
             raise ValueError(f"Config {run.config_id} was not found")
+        if run.status == RunStatus.STOPPED.value:
+            return
+        if run.status != RunStatus.QUEUED.value:
+            raise ValueError(f"Run {run_id} is not ready to start from status '{run.status}'")
 
         run.status = RunStatus.RUNNING.value
         run.started_at = utcnow()
+        run.error_message = None
         self.db.commit()
 
         graph = self._build_graph()
@@ -81,6 +91,9 @@ class ExplorationEngine:
                 config={"recursion_limit": max(50, run.max_steps * 8)},
             )
             await self._finalize_run(final_state, failed=False)
+        except RunStoppedError as exc:
+            await self._close_runtime(initial_state)
+            await self._mark_run_stopped(run_id, str(exc))
         except Exception as exc:
             await self._close_runtime(initial_state)
             await self._handle_fatal_error(run, str(exc))
@@ -254,6 +267,7 @@ class ExplorationEngine:
         return state
 
     async def _inspect_page(self, state: GraphState) -> GraphState:
+        await self._await_run_signal(state)
         if state["steps_taken"] >= state["run"].max_steps:
             state["done"] = True
             return state
@@ -305,6 +319,7 @@ class ExplorationEngine:
         return state
 
     async def _execute_action(self, state: GraphState) -> GraphState:
+        await self._await_run_signal(state)
         action = state["next_action"]
         if action is None:
             return state
@@ -442,6 +457,7 @@ class ExplorationEngine:
         return state
 
     async def _validate_page(self, state: GraphState) -> GraphState:
+        await self._await_run_signal(state)
         tools: PlaywrightTools = state["tools"]
         current_state = await tools.get_page_state()
         state["page_state"] = current_state
@@ -2159,3 +2175,26 @@ class ExplorationEngine:
             await browser.close()
         if playwright is not None:
             await playwright.stop()
+
+    async def _await_run_signal(self, state: GraphState) -> None:
+        run_id = state["run"].id
+        while True:
+            self.db.expire_all()
+            run = self.db.get(TestRun, run_id)
+            if run is None:
+                raise RunStoppedError("Run was deleted while executing.")
+            if run.status == RunStatus.STOPPED.value:
+                raise RunStoppedError(run.error_message or "Run stopped by user.")
+            if run.status == RunStatus.PAUSED.value:
+                await asyncio.sleep(1)
+                continue
+            return
+
+    async def _mark_run_stopped(self, run_id: str, error_message: str) -> None:
+        run = self.db.get(TestRun, run_id)
+        if run is None:
+            return
+        run.status = RunStatus.STOPPED.value
+        run.error_message = error_message or "Run stopped by user."
+        run.ended_at = utcnow()
+        self.db.commit()

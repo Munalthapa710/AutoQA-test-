@@ -51,6 +51,22 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+async function requestVoid(path: string, init?: RequestInit): Promise<void> {
+  const response = await fetch(`${API_BASE}${path}`, {
+    ...init,
+    headers: {
+      "Content-Type": "application/json",
+      ...(init?.headers ?? {}),
+    },
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `Request failed with status ${response.status}`);
+  }
+}
+
 function canUseLocalStore() {
   return typeof window !== "undefined" && typeof window.localStorage !== "undefined";
 }
@@ -112,6 +128,32 @@ function createId() {
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+function updateLocalRun(id: string, updater: (run: Run) => Run): Run {
+  const store = readLocalStore();
+  const index = store.runs.findIndex((entry) => entry.id === id);
+  if (index === -1) {
+    throw new Error("Run not found.");
+  }
+  const run = updater(store.runs[index]);
+  const runs = [...store.runs];
+  runs[index] = run;
+  writeLocalStore({ ...store, runs });
+  return run;
+}
+
+function deleteLocalRun(id: string): void {
+  const store = readLocalStore();
+  writeLocalStore({
+    ...store,
+    runs: store.runs.filter((entry) => entry.id !== id),
+    runSteps: store.runSteps.filter((entry) => entry.run_id !== id),
+    flows: store.flows.filter((entry) => entry.run_id !== id),
+    failures: store.failures.filter((entry) => entry.run_id !== id),
+    artifacts: store.artifacts.filter((entry) => entry.run_id !== id),
+    generatedTests: store.generatedTests.filter((entry) => entry.run_id !== id),
+  });
 }
 
 async function withFallback<T>(remote: () => Promise<T>, local: () => T): Promise<T> {
@@ -291,6 +333,66 @@ export const api = {
           runs: [run, ...store.runs],
         });
         return { id: run.id };
+      },
+    ),
+  pauseRun: (id: string) =>
+    withFallback(
+      () => request<Run>(`/runs/${id}/pause`, { method: "POST" }),
+      () =>
+        updateLocalRun(id, (run) => ({
+          ...run,
+          status: "paused",
+          updated_at: nowIso(),
+        })),
+    ),
+  resumeRun: (id: string) =>
+    withFallback(
+      () => request<Run>(`/runs/${id}/resume`, { method: "POST" }),
+      () =>
+        updateLocalRun(id, (run) => ({
+          ...run,
+          status: "running",
+          started_at: run.started_at ?? nowIso(),
+          updated_at: nowIso(),
+        })),
+    ),
+  stopRun: (id: string) =>
+    withFallback(
+      () => request<Run>(`/runs/${id}/stop`, { method: "POST" }),
+      () =>
+        updateLocalRun(id, (run) => ({
+          ...run,
+          status: "stopped",
+          ended_at: nowIso(),
+          error_message: "Run stopped by user.",
+          updated_at: nowIso(),
+        })),
+    ),
+  deleteRun: (id: string) =>
+    withFallback(
+      () => requestVoid(`/runs/${id}`, { method: "DELETE" }),
+      () => deleteLocalRun(id),
+    ),
+  clearRunHistory: () =>
+    withFallback(
+      () => request<{ deleted_runs: number }>("/runs/history", { method: "DELETE" }),
+      () => {
+        const store = readLocalStore();
+        const inactiveRunIds = new Set(
+          store.runs
+            .filter((run) => !["queued", "running", "paused"].includes(run.status))
+            .map((run) => run.id),
+        );
+        writeLocalStore({
+          ...store,
+          runs: store.runs.filter((run) => !inactiveRunIds.has(run.id)),
+          runSteps: store.runSteps.filter((entry) => !inactiveRunIds.has(entry.run_id)),
+          flows: store.flows.filter((entry) => !inactiveRunIds.has(entry.run_id)),
+          failures: store.failures.filter((entry) => !inactiveRunIds.has(entry.run_id)),
+          artifacts: store.artifacts.filter((entry) => !inactiveRunIds.has(entry.run_id)),
+          generatedTests: store.generatedTests.filter((entry) => !inactiveRunIds.has(entry.run_id)),
+        });
+        return { deleted_runs: inactiveRunIds.size };
       },
     ),
 };

@@ -3,7 +3,9 @@ import logging
 import time
 
 from autoqa_shared.db import SessionLocal
+from autoqa_shared.enums import RunStatus
 from autoqa_shared.explorer import ExplorationEngine
+from autoqa_shared.models import TestRun
 from autoqa_shared.queue import RunQueue
 from autoqa_shared.settings import get_settings
 
@@ -28,6 +30,13 @@ def main() -> None:
         logger.info("picked run_id=%s", run_id)
         db = SessionLocal()
         try:
+            run = db.get(TestRun, run_id)
+            if run is None:
+                logger.info("skipping missing run_id=%s", run_id)
+                continue
+            if run.status != RunStatus.QUEUED.value:
+                logger.info("skipping run_id=%s status=%s", run_id, run.status)
+                continue
             engine = ExplorationEngine(db)
             asyncio.run(engine.run(run_id))
             logger.info("completed run_id=%s", run_id)

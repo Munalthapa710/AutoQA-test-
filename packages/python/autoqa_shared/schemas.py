@@ -47,6 +47,10 @@ class RunCreate(BaseModel):
     config_id: str
 
 
+class RunDeleteRead(BaseModel):
+    deleted_runs: int
+
+
 class TestRunRead(BaseSchema):
     id: str
     config_id: str

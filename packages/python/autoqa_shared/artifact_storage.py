@@ -57,3 +57,19 @@ class ArtifactStorage:
         file_path = target_dir / filename
         file_path.write_text(content, encoding="utf-8")
         return self._relative_posix(file_path, self.generated_tests_root)
+
+    def delete_run_artifacts(self, run_id: str) -> None:
+        for category in ("screenshots", "traces", "reports"):
+            target_dir = self.root / category / run_id
+            if target_dir.exists():
+                for path in sorted(target_dir.rglob("*"), reverse=True):
+                    if path.is_file():
+                        path.unlink(missing_ok=True)
+                    elif path.is_dir():
+                        path.rmdir()
+                target_dir.rmdir()
+
+    def delete_generated_test(self, file_path: str) -> None:
+        target_path = self.generated_tests_root / Path(file_path)
+        if target_path.exists():
+            target_path.unlink(missing_ok=True)
