@@ -16,6 +16,9 @@ class ArtifactStorage:
         self.root = self.settings.artifacts_root
         self.generated_tests_root = self.settings.generated_tests_root
 
+    def _relative_posix(self, file_path: Path, base: Path) -> str:
+        return file_path.relative_to(base).as_posix()
+
     def ensure_run_dir(self, category: str, run_id: str) -> Path:
         path = self.root / category / run_id
         path.mkdir(parents=True, exist_ok=True)
@@ -25,13 +28,13 @@ class ArtifactStorage:
         target_dir = self.ensure_run_dir(category, run_id)
         file_path = target_dir / filename
         file_path.write_bytes(content)
-        return str(file_path.relative_to(self.root))
+        return self._relative_posix(file_path, self.root)
 
     def write_text(self, category: str, run_id: str, filename: str, content: str) -> str:
         target_dir = self.ensure_run_dir(category, run_id)
         file_path = target_dir / filename
         file_path.write_text(content, encoding="utf-8")
-        return str(file_path.relative_to(self.root))
+        return self._relative_posix(file_path, self.root)
 
     def write_json(self, category: str, run_id: str, filename: str, content: dict) -> str:
         return self.write_text(category, run_id, filename, json.dumps(content, indent=2))
@@ -40,17 +43,17 @@ class ArtifactStorage:
         filename = f"{step_index:03d}-{slugify(label)}.png"
         target_dir = self.ensure_run_dir("screenshots", run_id)
         file_path = target_dir / filename
-        return str(file_path.relative_to(self.root)), file_path
+        return self._relative_posix(file_path, self.root), file_path
 
     def reserve_trace_path(self, run_id: str, label: str = "trace") -> tuple[str, Path]:
         filename = f"{slugify(label)}.zip"
         target_dir = self.ensure_run_dir("traces", run_id)
         file_path = target_dir / filename
-        return str(file_path.relative_to(self.root)), file_path
+        return self._relative_posix(file_path, self.root), file_path
 
     def write_generated_test(self, filename: str, content: str) -> str:
         target_dir = self.generated_tests_root
         target_dir.mkdir(parents=True, exist_ok=True)
         file_path = target_dir / filename
         file_path.write_text(content, encoding="utf-8")
-        return str(file_path.relative_to(self.generated_tests_root))
+        return self._relative_posix(file_path, self.generated_tests_root)

@@ -141,11 +141,19 @@ function getLocalRunDetail(id: string): RunDetail {
 }
 
 export function artifactUrl(filePath: string) {
-  return `${API_BASE}/files/artifacts/${filePath}`;
+  return `${API_BASE}/files/artifacts/${toAssetPath(filePath)}`;
 }
 
 export function generatedTestFileUrl(filePath: string) {
-  return `${API_BASE}/files/generated-tests/${filePath}`;
+  return `${API_BASE}/files/generated-tests/${toAssetPath(filePath)}`;
+}
+
+function toAssetPath(filePath: string) {
+  return filePath
+    .split(/[\\/]+/)
+    .filter(Boolean)
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
 }
 
 export const api = {
