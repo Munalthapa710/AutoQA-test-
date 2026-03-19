@@ -89,6 +89,8 @@ export PYTHONPATH="$PWD/apps/api:$PWD/apps/worker:$PWD/packages/python"
 
 If you run PostgreSQL or Redis locally instead of Docker, update `.env` so `DATABASE_URL` and `REDIS_URL` point to them.
 
+If PostgreSQL is unavailable during local development, the API now falls back to a local SQLite database at `./.runtime/autoqa-dev.db`. Redis-backed runs already fall back to the local JSON queue store.
+
 ### 2. Python dependencies
 
 ```bash

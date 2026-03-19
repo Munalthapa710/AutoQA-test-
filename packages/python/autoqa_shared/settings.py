@@ -9,10 +9,12 @@ class Settings(BaseSettings):
     project_name: str = "autoqa-agent"
     environment: str = "development"
     database_url: str = "postgresql+psycopg://postgres:postgres@localhost:5432/autoqa"
+    database_fallback_url: str | None = None
     redis_url: str = "redis://localhost:6379/0"
     api_public_base_url: str = "http://localhost:8000"
     artifacts_root: Path = Field(default=Path("/workspace/artifacts"))
     generated_tests_root: Path = Field(default=Path("/workspace/generated-tests"))
+    runtime_root: Path = Field(default=Path(".runtime"))
     playwright_headless: bool = True
     safe_mode_default: bool = True
     worker_queue_name: str = "autoqa:runs"
@@ -30,4 +32,5 @@ def get_settings() -> Settings:
     settings = Settings()
     settings.artifacts_root.mkdir(parents=True, exist_ok=True)
     settings.generated_tests_root.mkdir(parents=True, exist_ok=True)
+    settings.runtime_root.mkdir(parents=True, exist_ok=True)
     return settings
