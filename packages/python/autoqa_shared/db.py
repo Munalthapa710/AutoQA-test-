@@ -2,7 +2,7 @@ import logging
 from collections.abc import Generator
 from pathlib import Path
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from .settings import get_settings
@@ -45,6 +45,32 @@ def _ensure_sqlite_schema(engine) -> None:
     from . import models as _models  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
+    _apply_sqlite_compat_migrations(engine)
+
+
+def _apply_sqlite_compat_migrations(engine) -> None:
+    inspector = inspect(engine)
+    if "test_runs" not in inspector.get_table_names():
+        return
+
+    columns = {column["name"] for column in inspector.get_columns("test_runs")}
+    with engine.begin() as connection:
+        if "control_state" not in columns:
+            connection.execute(text("ALTER TABLE test_runs ADD COLUMN control_state VARCHAR(32)"))
+            connection.execute(
+                text(
+                    "UPDATE test_runs "
+                    "SET status = 'running', control_state = 'paused' "
+                    "WHERE status = 'paused'"
+                )
+            )
+        connection.execute(
+            text(
+                "UPDATE test_runs "
+                "SET control_state = NULL "
+                "WHERE status IN ('completed', 'failed', 'stopped')"
+            )
+        )
 
 
 def _build_engine():

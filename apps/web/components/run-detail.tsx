@@ -7,6 +7,14 @@ import { formatDistanceToNow } from "date-fns";
 import { ExternalLink, FileCode2, Image as ImageIcon, Link2, Pause, Play, ScrollText, Square, Trash2, TriangleAlert } from "lucide-react";
 
 import { api, artifactUrl, generatedTestFileUrl } from "../lib/api";
+import {
+  canDeleteRun,
+  canPauseRun,
+  canResumeRun,
+  canStopRun,
+  displayRunStatus,
+  runStatusMessage as describeRunStatus,
+} from "../lib/run-status";
 import type { Artifact, DiscoveredFlow, FailureReport, GeneratedTest, RunDetail as RunDetailType, RunStep } from "../lib/types";
 import { Panel } from "./panel";
 import { StatusBadge } from "./status-badge";
@@ -118,21 +126,22 @@ export function RunDetail({ runId }: { runId: string }) {
     setError(null);
     setFeedback(runActionMessage(action, "pending"));
     try {
+      let nextRun: RunDetailType | null = null;
       if (action === "pause") {
-        const nextRun = await api.pauseRun(run.id);
+        nextRun = { ...run, ...(await api.pauseRun(run.id)) };
         setRun({ ...run, ...nextRun });
       } else if (action === "resume") {
-        const nextRun = await api.resumeRun(run.id);
+        nextRun = { ...run, ...(await api.resumeRun(run.id)) };
         setRun({ ...run, ...nextRun });
       } else if (action === "stop") {
-        const nextRun = await api.stopRun(run.id);
+        nextRun = { ...run, ...(await api.stopRun(run.id)) };
         setRun({ ...run, ...nextRun });
       } else {
         await api.deleteRun(run.id);
         router.push("/");
         return;
       }
-      setFeedback(runActionMessage(action, "done"));
+      setFeedback(runActionMessage(action, "done", nextRun));
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : "Failed to update run.");
       setFeedback(null);
@@ -161,6 +170,9 @@ export function RunDetail({ runId }: { runId: string }) {
     );
   }
 
+  const detailStatusMessage = describeRunStatus(run);
+  const visibleStatusMessage = detailStatusMessage === run.error_message ? null : detailStatusMessage;
+
   return (
     <main className="mx-auto flex w-full max-w-7xl flex-col gap-6">
       <section className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
@@ -171,7 +183,7 @@ export function RunDetail({ runId }: { runId: string }) {
               <h1 className="overflow-anywhere mt-2 font-display text-3xl font-semibold text-ink">{run.config.name}</h1>
               <p className="overflow-anywhere mt-2 text-sm text-slate/75">{run.config.target_url}</p>
             </div>
-            <StatusBadge value={run.status} />
+            <StatusBadge value={displayRunStatus(run)} />
           </div>
 
           <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
@@ -202,32 +214,32 @@ export function RunDetail({ runId }: { runId: string }) {
               {feedback}
             </p>
           ) : null}
-          {runDetailStatusMessage(run) ? <p className="mt-4 rounded-2xl bg-white/80 px-4 py-3 text-sm text-slate/80">{runDetailStatusMessage(run)}</p> : null}
+          {visibleStatusMessage ? <p className="mt-4 rounded-2xl bg-white/80 px-4 py-3 text-sm text-slate/80">{visibleStatusMessage}</p> : null}
 
           <div className="mt-6 flex flex-wrap gap-3">
             <a href={run.config.target_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-full bg-ink px-5 py-3 text-sm font-semibold text-white">
               Open target
               <ExternalLink className="h-4 w-4" />
             </a>
-            {run.status === "running" ? (
+            {canPauseRun(run) ? (
               <ActionButton disabled={isMutating} onClick={() => void handleRunAction("pause")}>
                 <Pause className="h-4 w-4" />
                 {isMutating ? "Pausing..." : "Pause run"}
               </ActionButton>
             ) : null}
-            {run.status === "paused" ? (
+            {canResumeRun(run) ? (
               <ActionButton disabled={isMutating} onClick={() => void handleRunAction("resume")}>
                 <Play className="h-4 w-4" />
                 {isMutating ? "Resuming..." : "Resume run"}
               </ActionButton>
             ) : null}
-            {["queued", "running", "paused"].includes(run.status) ? (
+            {canStopRun(run) ? (
               <ActionButton disabled={isMutating} onClick={() => setConfirmAction("stop")}>
                 <Square className="h-4 w-4" />
                 {isMutating ? "Stopping..." : "Stop run"}
               </ActionButton>
             ) : null}
-            {!["queued", "running", "paused"].includes(run.status) ? (
+            {canDeleteRun(run) ? (
               <ActionButton disabled={isMutating} onClick={() => setConfirmAction("delete")}>
                 <Trash2 className="h-4 w-4" />
                 {isMutating ? "Deleting..." : "Delete run"}
@@ -654,31 +666,30 @@ function ConfirmDialog({
   );
 }
 
-function runActionMessage(action: "pause" | "resume" | "stop" | "delete", phase: "pending" | "done"): string {
-  const messages = {
-    pause: { pending: "Pause requested. The run will wait at the next safe checkpoint.", done: "Run paused." },
-    resume: { pending: "Resuming run...", done: "Run resumed." },
-    stop: { pending: "Stop requested. The run will stop at the next safe checkpoint.", done: "Run stopped." },
-    delete: { pending: "Deleting run...", done: "Run deleted." },
-  };
-  return messages[action][phase];
-}
-
-function runDetailStatusMessage(run: RunDetailType): string | null {
-  if (run.status === "paused") {
-    return "Paused by user. Resume to continue from the current checkpoint.";
+function runActionMessage(
+  action: "pause" | "resume" | "stop" | "delete",
+  phase: "pending" | "done",
+  run?: Pick<RunDetailType, "status" | "control_state"> | null,
+): string {
+  if (phase === "pending") {
+    const messages = {
+      pause: "Pause requested. The run will wait at the next safe checkpoint.",
+      resume: "Resuming run...",
+      stop: "Stop requested. The run will stop at the next safe checkpoint.",
+      delete: "Deleting run...",
+    };
+    return messages[action];
   }
-  if (run.status === "running") {
-    return "Run is actively exploring the app.";
+  if (action === "pause") {
+    return run?.control_state === "pause_requested" ? "Pause requested." : "Run paused.";
   }
-  if (run.status === "queued") {
-    return "Run is waiting for the worker to pick it up.";
+  if (action === "resume") {
+    return "Run resumed.";
   }
-  if (run.status === "stopped") {
-    return run.error_message ? null : "Stopped by user.";
+  if (action === "stop") {
+    return run?.status === "stopped" ? "Run stopped." : "Stop requested.";
   }
-  const statusNote = typeof run.summary.status_note === "string" ? run.summary.status_note : null;
-  return statusNote;
+  return "Run deleted.";
 }
 
 function KeyStat({ title, value }: { title: string; value: string }) {

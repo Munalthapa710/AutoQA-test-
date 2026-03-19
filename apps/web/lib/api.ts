@@ -315,6 +315,7 @@ export const api = {
           id: createId(),
           config_id: configId,
           status: "queued",
+          control_state: null,
           max_steps: config.max_steps,
           safe_mode: config.safe_mode,
           started_at: null,
@@ -341,7 +342,7 @@ export const api = {
       () =>
         updateLocalRun(id, (run) => ({
           ...run,
-          status: "paused",
+          control_state: "paused",
           updated_at: nowIso(),
         })),
     ),
@@ -352,6 +353,7 @@ export const api = {
         updateLocalRun(id, (run) => ({
           ...run,
           status: "running",
+          control_state: null,
           started_at: run.started_at ?? nowIso(),
           updated_at: nowIso(),
         })),
@@ -363,6 +365,7 @@ export const api = {
         updateLocalRun(id, (run) => ({
           ...run,
           status: "stopped",
+          control_state: null,
           ended_at: nowIso(),
           error_message: "Run stopped by user.",
           updated_at: nowIso(),
@@ -380,7 +383,7 @@ export const api = {
         const store = readLocalStore();
         const inactiveRunIds = new Set(
           store.runs
-            .filter((run) => !["queued", "running", "paused"].includes(run.status))
+            .filter((run) => ["completed", "failed", "stopped"].includes(run.status))
             .map((run) => run.id),
         );
         writeLocalStore({

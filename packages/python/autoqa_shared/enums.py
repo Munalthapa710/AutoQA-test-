@@ -16,6 +16,12 @@ class RunStatus(StrEnum):
     STOPPED = "stopped"
 
 
+class RunControlState(StrEnum):
+    PAUSE_REQUESTED = "pause_requested"
+    PAUSED = "paused"
+    STOP_REQUESTED = "stop_requested"
+
+
 class StepStatus(StrEnum):
     PENDING = "pending"
     PASSED = "passed"

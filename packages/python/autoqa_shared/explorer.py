@@ -14,7 +14,7 @@ from playwright.async_api import async_playwright
 from sqlalchemy.orm import Session
 
 from .artifact_storage import ArtifactStorage, slugify
-from .enums import ArtifactType, FailureType, RiskLevel, RunStatus, StepStatus
+from .enums import ArtifactType, FailureType, RiskLevel, RunControlState, RunStatus, StepStatus
 from .generated_tests import GeneratedTestExporter
 from .models import Artifact, DiscoveredFlow, FailureReport, GeneratedTest, RunStep, TestConfig, TestRun
 from .playwright_tools import PlaywrightTools, classify_risk, infer_category, normalize_text
@@ -46,12 +46,13 @@ class ExplorationEngine:
         config = self.db.get(TestConfig, run.config_id)
         if config is None:
             raise ValueError(f"Config {run.config_id} was not found")
-        if run.status == RunStatus.STOPPED.value:
+        if run.status == RunStatus.STOPPED.value or run.control_state == RunControlState.STOP_REQUESTED.value:
             return
         if run.status != RunStatus.QUEUED.value:
             raise ValueError(f"Run {run_id} is not ready to start from status '{run.status}'")
 
         run.status = RunStatus.RUNNING.value
+        run.control_state = None
         run.started_at = utcnow()
         run.error_message = None
         self.db.commit()
@@ -2107,6 +2108,7 @@ class ExplorationEngine:
             severity="high",
         )
         run.status = RunStatus.FAILED.value
+        run.control_state = None
         run.error_message = error_message
         run.ended_at = utcnow()
         self.db.commit()
@@ -2145,6 +2147,7 @@ class ExplorationEngine:
 
         failure_count = self.db.query(FailureReport).filter(FailureReport.run_id == run.id).count()
         run.status = RunStatus.FAILED.value if failed and failure_count else RunStatus.COMPLETED.value
+        run.control_state = None
         summary = {
             "failure_count": failure_count,
             "generated_test_count": generated_count,
@@ -2185,7 +2188,15 @@ class ExplorationEngine:
                 raise RunStoppedError("Run was deleted while executing.")
             if run.status == RunStatus.STOPPED.value:
                 raise RunStoppedError(run.error_message or "Run stopped by user.")
-            if run.status == RunStatus.PAUSED.value:
+            if run.control_state == RunControlState.STOP_REQUESTED.value:
+                raise RunStoppedError("Run stopped by user.")
+            if run.control_state == RunControlState.PAUSE_REQUESTED.value:
+                run.control_state = RunControlState.PAUSED.value
+                run.error_message = None
+                self.db.commit()
+                await asyncio.sleep(1)
+                continue
+            if run.control_state == RunControlState.PAUSED.value:
                 await asyncio.sleep(1)
                 continue
             return
@@ -2195,6 +2206,7 @@ class ExplorationEngine:
         if run is None:
             return
         run.status = RunStatus.STOPPED.value
+        run.control_state = None
         run.error_message = error_message or "Run stopped by user."
         run.ended_at = utcnow()
         self.db.commit()

@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from autoqa_shared.artifact_storage import ArtifactStorage
-from autoqa_shared.enums import RunStatus
+from autoqa_shared.enums import RunControlState, RunStatus
 from autoqa_shared.models import Artifact, DiscoveredFlow, FailureReport, GeneratedTest, RunStep, TestConfig, TestRun
 from autoqa_shared.schemas import (
     ArtifactRead,
@@ -23,6 +23,9 @@ from autoqa_shared.queue import RunQueue
 from ...dependencies import get_db, get_queue
 
 router = APIRouter(prefix="/runs", tags=["runs"])
+
+TERMINAL_RUN_STATUSES = {RunStatus.COMPLETED.value, RunStatus.FAILED.value, RunStatus.STOPPED.value}
+PAUSED_CONTROL_STATES = {RunControlState.PAUSE_REQUESTED.value, RunControlState.PAUSED.value}
 
 
 def _utcnow() -> datetime:
@@ -64,6 +67,7 @@ def create_run(
     run = TestRun(
         config_id=config.id,
         status="queued",
+        control_state=None,
         max_steps=config.max_steps,
         safe_mode=config.safe_mode,
         run_settings={
@@ -122,7 +126,11 @@ def pause_run(run_id: str, db: Session = Depends(get_db)) -> TestRun:
     run = _get_run_or_404(db, run_id)
     if run.status != RunStatus.RUNNING.value:
         raise HTTPException(status_code=409, detail="Only running runs can be paused")
-    run.status = RunStatus.PAUSED.value
+    if run.control_state == RunControlState.STOP_REQUESTED.value:
+        raise HTTPException(status_code=409, detail="This run is already stopping")
+    if run.control_state in PAUSED_CONTROL_STATES:
+        raise HTTPException(status_code=409, detail="This run is already pausing")
+    run.control_state = RunControlState.PAUSE_REQUESTED.value
     run.error_message = None
     db.commit()
     db.refresh(run)
@@ -132,9 +140,9 @@ def pause_run(run_id: str, db: Session = Depends(get_db)) -> TestRun:
 @router.post("/{run_id}/resume", response_model=TestRunRead)
 def resume_run(run_id: str, db: Session = Depends(get_db)) -> TestRun:
     run = _get_run_or_404(db, run_id)
-    if run.status != RunStatus.PAUSED.value:
+    if run.status != RunStatus.RUNNING.value or run.control_state not in PAUSED_CONTROL_STATES:
         raise HTTPException(status_code=409, detail="Only paused runs can be resumed")
-    run.status = RunStatus.RUNNING.value
+    run.control_state = None
     run.error_message = None
     db.commit()
     db.refresh(run)
@@ -144,11 +152,18 @@ def resume_run(run_id: str, db: Session = Depends(get_db)) -> TestRun:
 @router.post("/{run_id}/stop", response_model=TestRunRead)
 def stop_run(run_id: str, db: Session = Depends(get_db)) -> TestRun:
     run = _get_run_or_404(db, run_id)
-    if run.status in {RunStatus.COMPLETED.value, RunStatus.FAILED.value, RunStatus.STOPPED.value}:
+    if run.status in TERMINAL_RUN_STATUSES:
         raise HTTPException(status_code=409, detail="Only active runs can be stopped")
-    run.status = RunStatus.STOPPED.value
-    run.error_message = "Run stopped by user."
-    run.ended_at = _utcnow()
+    if run.status == RunStatus.QUEUED.value:
+        run.status = RunStatus.STOPPED.value
+        run.control_state = None
+        run.error_message = "Run stopped by user."
+        run.ended_at = _utcnow()
+    else:
+        if run.control_state == RunControlState.STOP_REQUESTED.value:
+            raise HTTPException(status_code=409, detail="This run is already stopping")
+        run.control_state = RunControlState.STOP_REQUESTED.value
+        run.error_message = None
     db.commit()
     db.refresh(run)
     return run
@@ -157,7 +172,7 @@ def stop_run(run_id: str, db: Session = Depends(get_db)) -> TestRun:
 @router.delete("/{run_id}", status_code=status.HTTP_204_NO_CONTENT, response_class=Response)
 def delete_run(run_id: str, db: Session = Depends(get_db)) -> Response:
     run = _get_run_or_404(db, run_id)
-    if run.status in {RunStatus.RUNNING.value, RunStatus.PAUSED.value, RunStatus.QUEUED.value}:
+    if run.status not in TERMINAL_RUN_STATUSES:
         raise HTTPException(status_code=409, detail="Stop the run before deleting it")
     _delete_run_files(db, run)
     db.delete(run)

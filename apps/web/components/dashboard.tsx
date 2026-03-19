@@ -8,6 +8,15 @@ import { ArrowRight, Beaker, History, Pause, Play, Sparkles, Square, Trash2 } fr
 
 import { api } from "../lib/api";
 import type { GeneratedTest, RunListItem } from "../lib/types";
+import {
+  canDeleteRun,
+  canPauseRun,
+  canResumeRun,
+  canStopRun,
+  displayRunStatus,
+  isActiveRun,
+  runStatusMessage as describeRunStatus,
+} from "../lib/run-status";
 import { Panel } from "./panel";
 import { StatusBadge } from "./status-badge";
 
@@ -95,7 +104,7 @@ export function Dashboard() {
   const totals = useMemo(() => {
     return {
       totalRuns: runs.length,
-      activeRuns: runs.filter((run) => run.status === "running" || run.status === "queued").length,
+      activeRuns: runs.filter((run) => isActiveRun(run)).length,
       failedRuns: runs.filter((run) => run.status === "failed").length,
       generatedTests: tests.length,
     };
@@ -136,17 +145,18 @@ export function Dashboard() {
     setError(null);
     setFeedback(actionMessage(action, "pending"));
     try {
+      let updatedRun: Pick<RunListItem, "status" | "control_state"> | null = null;
       if (action === "pause") {
-        await api.pauseRun(run.id);
+        updatedRun = await api.pauseRun(run.id);
       } else if (action === "resume") {
-        await api.resumeRun(run.id);
+        updatedRun = await api.resumeRun(run.id);
       } else if (action === "stop") {
-        await api.stopRun(run.id);
+        updatedRun = await api.stopRun(run.id);
       } else {
         await api.deleteRun(run.id);
       }
       await loadDashboard();
-      setFeedback(actionMessage(action, "done"));
+      setFeedback(actionMessage(action, "done", updatedRun));
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : "Failed to update run.");
       setFeedback(null);
@@ -347,7 +357,7 @@ export function Dashboard() {
             <button
               type="button"
               onClick={() => setConfirmAction({ type: "clear-history" })}
-              disabled={isClearingHistory || runs.every((run) => ["queued", "running", "paused"].includes(run.status))}
+              disabled={isClearingHistory || runs.every((run) => isActiveRun(run))}
               className="inline-flex items-center gap-2 rounded-full border border-slate/10 bg-white px-4 py-2 text-sm font-semibold text-slate transition hover:border-slate/20 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <Trash2 className="h-4 w-4" />
@@ -358,28 +368,31 @@ export function Dashboard() {
             {runs.length === 0 ? (
               <EmptyState title="No runs yet" description="Launch the first exploration run to start building coverage and generated tests." />
             ) : (
-              runs.map((run) => (
+              runs.map((run) => {
+                const status = displayRunStatus(run);
+                const statusMessage = describeRunStatus(run);
+                return (
                 <article key={run.id} className="overflow-hidden rounded-[24px] border border-slate/10 bg-sand/50 p-4 transition hover:border-slate/20 hover:bg-white">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <Link href={`/runs/${run.id}`} className="min-w-0 flex-1">
                       <p className="font-display text-lg font-semibold text-ink">{run.config_name}</p>
                       <p className="overflow-anywhere mt-1 text-sm text-slate/70">{run.target_url}</p>
                     </Link>
-                    <StatusBadge value={run.status} />
+                    <StatusBadge value={status} />
                   </div>
                   <div className="mt-4 grid gap-3 text-sm text-slate/75 sm:grid-cols-3">
                     <span>Created {formatDistanceToNow(new Date(run.created_at), { addSuffix: true })}</span>
                     <span>Max steps {run.max_steps}</span>
                     <span>Failures {String((run.summary.failure_count as number | undefined) ?? 0)}</span>
                   </div>
-                  {runStatusMessage(run) ? (
-                    <p className="mt-4 rounded-2xl bg-white/80 px-4 py-3 text-sm text-slate/80">{runStatusMessage(run)}</p>
+                  {statusMessage ? (
+                    <p className="mt-4 rounded-2xl bg-white/80 px-4 py-3 text-sm text-slate/80">{statusMessage}</p>
                   ) : null}
                   <div className="mt-4 flex flex-wrap gap-2">
                     <Link href={`/runs/${run.id}`} className="inline-flex items-center gap-2 rounded-full bg-ink px-4 py-2 text-sm font-semibold text-white">
                       Open
                     </Link>
-                    {run.status === "running" ? (
+                    {canPauseRun(run) ? (
                       <RunActionButton
                         icon={<Pause className="h-4 w-4" />}
                         label={busyRunId === run.id ? "Pausing..." : "Pause"}
@@ -387,7 +400,7 @@ export function Dashboard() {
                         onClick={() => void handleRunAction(run, "pause")}
                       />
                     ) : null}
-                    {run.status === "paused" ? (
+                    {canResumeRun(run) ? (
                       <RunActionButton
                         icon={<Play className="h-4 w-4" />}
                         label={busyRunId === run.id ? "Resuming..." : "Resume"}
@@ -395,7 +408,7 @@ export function Dashboard() {
                         onClick={() => void handleRunAction(run, "resume")}
                       />
                     ) : null}
-                    {["queued", "running", "paused"].includes(run.status) ? (
+                    {canStopRun(run) ? (
                       <RunActionButton
                         icon={<Square className="h-4 w-4" />}
                         label={busyRunId === run.id ? "Stopping..." : "Stop"}
@@ -403,7 +416,7 @@ export function Dashboard() {
                         onClick={() => setConfirmAction({ type: "stop", run })}
                       />
                     ) : null}
-                    {!["queued", "running", "paused"].includes(run.status) ? (
+                    {canDeleteRun(run) ? (
                       <RunActionButton
                         icon={<Trash2 className="h-4 w-4" />}
                         label={busyRunId === run.id ? "Deleting..." : "Delete"}
@@ -413,7 +426,7 @@ export function Dashboard() {
                     ) : null}
                   </div>
                 </article>
-              ))
+              )})
             )}
           </div>
         </Panel>
@@ -651,31 +664,30 @@ function ConfirmDialog({
   );
 }
 
-function runStatusMessage(run: RunListItem): string | null {
-  if (run.status === "paused") {
-    return "Paused by user. Resume to continue from the current checkpoint.";
+function actionMessage(
+  action: "pause" | "resume" | "stop" | "delete",
+  phase: "pending" | "done",
+  run?: Pick<RunListItem, "status" | "control_state"> | null,
+): string {
+  if (phase === "pending") {
+    const messages = {
+      pause: "Pausing run...",
+      resume: "Resuming run...",
+      stop: "Stopping run...",
+      delete: "Deleting run...",
+    };
+    return messages[action];
   }
-  if (run.status === "running") {
-    return "Run is actively exploring the app.";
+  if (action === "pause") {
+    return run?.control_state === "pause_requested" ? "Pause requested." : "Run paused.";
   }
-  if (run.status === "queued") {
-    return "Run is waiting for the worker to pick it up.";
+  if (action === "resume") {
+    return "Run resumed.";
   }
-  if (run.status === "stopped") {
-    return run.error_message || "Stopped by user.";
+  if (action === "stop") {
+    return run?.status === "stopped" ? "Run stopped." : "Stop requested.";
   }
-  const statusNote = typeof run.summary.status_note === "string" ? run.summary.status_note : null;
-  return statusNote;
-}
-
-function actionMessage(action: "pause" | "resume" | "stop" | "delete", phase: "pending" | "done"): string {
-  const messages = {
-    pause: { pending: "Pausing run...", done: "Run paused." },
-    resume: { pending: "Resuming run...", done: "Run resumed." },
-    stop: { pending: "Stopping run...", done: "Run stopped." },
-    delete: { pending: "Deleting run...", done: "Run deleted." },
-  };
-  return messages[action][phase];
+  return "Run deleted.";
 }
 
 function confirmTitle(

@@ -55,6 +55,7 @@ class TestRunRead(BaseSchema):
     id: str
     config_id: str
     status: str
+    control_state: str | None
     max_steps: int
     safe_mode: bool
     started_at: datetime | None

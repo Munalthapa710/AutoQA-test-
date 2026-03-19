@@ -48,6 +48,7 @@ class TestRun(Base, TimestampMixin):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=uuid_str)
     config_id: Mapped[str] = mapped_column(ForeignKey("test_configs.id", ondelete="CASCADE"), nullable=False)
     status: Mapped[str] = mapped_column(String(32), default="queued", nullable=False)
+    control_state: Mapped[str | None] = mapped_column(String(32))
     max_steps: Mapped[int] = mapped_column(Integer, nullable=False)
     safe_mode: Mapped[bool] = mapped_column(Boolean, nullable=False)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

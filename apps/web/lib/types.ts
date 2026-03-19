@@ -21,6 +21,7 @@ export type Run = {
   id: string;
   config_id: string;
   status: string;
+  control_state: string | null;
   max_steps: number;
   safe_mode: boolean;
   started_at: string | null;
