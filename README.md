@@ -58,7 +58,7 @@ docker compose up --build
 
 3. Open the services.
 
-- Dashboard: `http://localhost:3000`
+- Dashboard: `http://localhost:3002`
 - API docs: `http://localhost:8000/docs`
 - Health: `http://localhost:8000/health`
 

@@ -5,6 +5,7 @@
 .tmp/
 .runtime/
 .next
+$null
 __pycache__/
 *.pyc
 *.pyo
