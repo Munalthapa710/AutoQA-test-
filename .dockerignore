@@ -1,0 +1,13 @@
+.git
+.github
+.venv
+.pydeps
+.tmp
+node_modules
+artifacts
+generated-tests
+apps/web/.next
+apps/web/.next-run
+apps/web/.next-prod
+apps/web/tsconfig.tsbuildinfo
+*.log
