@@ -49,11 +49,12 @@ def _ensure_sqlite_schema(engine) -> None:
 
 
 def _apply_sqlite_compat_migrations(engine) -> None:
-    inspector = inspect(engine)
-    if "test_runs" not in inspector.get_table_names():
-        return
+    with engine.connect() as connection:
+        inspector = inspect(connection)
+        if "test_runs" not in inspector.get_table_names():
+            return
+        columns = {column["name"] for column in inspector.get_columns("test_runs")}
 
-    columns = {column["name"] for column in inspector.get_columns("test_runs")}
     with engine.begin() as connection:
         if "control_state" not in columns:
             connection.execute(text("ALTER TABLE test_runs ADD COLUMN control_state VARCHAR(32)"))

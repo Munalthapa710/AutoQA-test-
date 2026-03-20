@@ -17,12 +17,15 @@ MODULES_TO_RESET = [
 class DatabaseFallbackTests(unittest.TestCase):
     def setUp(self) -> None:
         self._original_env = os.environ.copy()
+        self._engines_to_dispose = []
         self._temp_dir = Path.cwd() / ".runtime" / "test-temp" / self._testMethodName
         shutil.rmtree(self._temp_dir, ignore_errors=True)
         self._temp_dir.mkdir(parents=True, exist_ok=True)
         self.addCleanup(shutil.rmtree, self._temp_dir, True)
 
     def tearDown(self) -> None:
+        for engine in self._engines_to_dispose:
+            engine.dispose()
         os.environ.clear()
         os.environ.update(self._original_env)
         self._reset_modules()
@@ -99,6 +102,7 @@ class DatabaseFallbackTests(unittest.TestCase):
         db_module = importlib.import_module("autoqa_shared.db")
         models_module = importlib.import_module("autoqa_shared.models")
         settings_module.get_settings.cache_clear()
+        self._engines_to_dispose.append(db_module.engine)
         return db_module, models_module
 
     def _reset_modules(self) -> None:
