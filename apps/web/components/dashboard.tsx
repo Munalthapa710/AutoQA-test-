@@ -72,6 +72,7 @@ export function Dashboard() {
   const router = useRouter();
   const [runs, setRuns] = useState<RunListItem[]>([]);
   const [tests, setTests] = useState<GeneratedTest[]>([]);
+  const [activeTab, setActiveTab] = useState<"launch" | "guide" | "activity">("launch");
   const [form, setForm] = useState<ConfigFormState>(DEFAULT_FORM);
   const [isLaunching, setIsLaunching] = useState(false);
   const [busyRunId, setBusyRunId] = useState<string | null>(null);
@@ -215,210 +216,238 @@ export function Dashboard() {
 
   return (
     <main className="mx-auto flex w-full max-w-7xl flex-col gap-6">
-      <section className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
-        <Panel className="relative overflow-hidden">
-          <div className="absolute right-0 top-0 h-32 w-32 rounded-full bg-ember/15 blur-3xl" />
-          <div className="absolute bottom-0 left-8 h-28 w-28 rounded-full bg-cyan-300/20 blur-3xl" />
-          <div className="relative">
-            <p className="font-mono text-xs uppercase tracking-[0.34em] text-slate/60">Agentic Web QA</p>
-            <h1 className="mt-3 max-w-2xl font-display text-4xl font-semibold tracking-tight text-ink sm:text-5xl">
-              Systematically discover pages, exercise forms, and turn failures into readable bug reports.
-            </h1>
-            <p className="mt-4 max-w-2xl text-sm leading-6 text-slate/80 sm:text-base">
-              This dashboard is built for QA. It walks same-domain navigation, opens visible create and edit flows, tests invalid and valid form submissions, records every step, and keeps screenshots, traces, and downloadable bug reports in one place.
-            </p>
-            <div className="mt-8 grid gap-3 sm:grid-cols-4">
-              <Metric title="Runs" value={String(totals.totalRuns)} icon={<History className="h-4 w-4" />} />
-              <Metric title="Active" value={String(totals.activeRuns)} icon={<Play className="h-4 w-4" />} />
-              <Metric title="Failures" value={String(totals.failedRuns)} icon={<Beaker className="h-4 w-4" />} />
-              <Metric title="Specs" value={String(totals.generatedTests)} icon={<Sparkles className="h-4 w-4" />} />
-            </div>
+      <Panel className="relative overflow-hidden">
+        <div className="absolute right-0 top-0 h-32 w-32 rounded-full bg-ember/15 blur-3xl" />
+        <div className="absolute bottom-0 left-8 h-28 w-28 rounded-full bg-cyan-300/20 blur-3xl" />
+        <div className="relative">
+          <p className="font-mono text-xs uppercase tracking-[0.34em] text-slate/60">Agentic Web QA</p>
+          <h1 className="mt-3 max-w-2xl font-display text-4xl font-semibold tracking-tight text-ink sm:text-5xl">
+            Systematically discover pages, exercise forms, and turn failures into readable bug reports.
+          </h1>
+          <p className="mt-4 max-w-2xl text-sm leading-6 text-slate/80 sm:text-base">
+            This dashboard is built for QA. It walks same-domain navigation, opens visible create and edit flows, tests invalid and valid form submissions, records every step, and keeps screenshots, traces, and downloadable bug reports in one place.
+          </p>
+          <div className="mt-8 grid gap-3 sm:grid-cols-4">
+            <Metric title="Runs" value={String(totals.totalRuns)} icon={<History className="h-4 w-4" />} />
+            <Metric title="Active" value={String(totals.activeRuns)} icon={<Play className="h-4 w-4" />} />
+            <Metric title="Failures" value={String(totals.failedRuns)} icon={<Beaker className="h-4 w-4" />} />
+            <Metric title="Specs" value={String(totals.generatedTests)} icon={<Sparkles className="h-4 w-4" />} />
           </div>
-        </Panel>
+        </div>
+      </Panel>
 
-        <Panel>
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="font-mono text-xs uppercase tracking-[0.34em] text-slate/60">Launch Run</p>
-              <h2 className="mt-2 font-display text-2xl font-semibold text-ink">Run configuration</h2>
+      <section className="flex flex-wrap gap-3">
+        <TabButton
+          label="Launch Run"
+          description="Configure and start a new exploration"
+          active={activeTab === "launch"}
+          onClick={() => setActiveTab("launch")}
+        />
+        <TabButton
+          label="Guide"
+          description="How AutoQA explores and reports issues"
+          active={activeTab === "guide"}
+          onClick={() => setActiveTab("guide")}
+        />
+        <TabButton
+          label="Activity"
+          description="Recent runs and generated specs"
+          active={activeTab === "activity"}
+          onClick={() => setActiveTab("activity")}
+        />
+      </section>
+
+      {activeTab === "launch" ? (
+        <section className="grid gap-6">
+          <Panel>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="font-mono text-xs uppercase tracking-[0.34em] text-slate/60">Launch Run</p>
+                <h2 className="mt-2 font-display text-2xl font-semibold text-ink">Run configuration</h2>
+              </div>
+              <StatusBadge value={form.safe_mode ? "safe" : "risky"} />
             </div>
-            <StatusBadge value={form.safe_mode ? "safe" : "risky"} />
-          </div>
 
-          <form className="mt-6 grid gap-4" onSubmit={launchRun}>
-            <FormSection
-              eyebrow="Scope"
-              title="Target and navigation"
-              description="Point the run at the app entry page and keep the domain list tight so the explorer stays on the product under test."
-            >
-              <div className="grid gap-4 md:grid-cols-2">
-                <Field label="Name">
-                  <input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} className={inputClass} />
-                </Field>
-                <Field label="Target URL">
-                  <input value={form.target_url} onChange={(event) => setForm({ ...form, target_url: event.target.value })} className={inputClass} />
-                </Field>
-                <Field label="Allowed domains">
-                  <input value={form.allowed_domains} onChange={(event) => setForm({ ...form, allowed_domains: event.target.value })} placeholder="example.com, admin.example.com" className={inputClass} />
-                </Field>
-                <Field label="Notes">
-                  <textarea value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} rows={3} className={`${inputClass} min-h-24`} />
-                </Field>
-              </div>
-            </FormSection>
-
-            <FormSection
-              eyebrow="Auth"
-              title="Login details"
-              description="Use these fields when the run must sign in before it can reach the real menu structure and form surfaces."
-            >
-              <div className="grid gap-4 md:grid-cols-2">
-                <Field label="Login URL">
-                  <input value={form.login_url} onChange={(event) => setForm({ ...form, login_url: event.target.value })} className={inputClass} />
-                </Field>
-                <Field label="Submit selector">
-                  <input value={form.submit_selector} onChange={(event) => setForm({ ...form, submit_selector: event.target.value })} placeholder="button[type='submit']" className={inputClass} />
-                </Field>
-                <Field label="Username">
-                  <input value={form.username} onChange={(event) => setForm({ ...form, username: event.target.value })} className={inputClass} />
-                </Field>
-                <Field label="Password">
-                  <input type="password" value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} className={inputClass} />
-                </Field>
-                <Field label="Username selector">
-                  <input value={form.username_selector} onChange={(event) => setForm({ ...form, username_selector: event.target.value })} placeholder="input[name='email']" className={inputClass} />
-                </Field>
-                <Field label="Password selector">
-                  <input value={form.password_selector} onChange={(event) => setForm({ ...form, password_selector: event.target.value })} placeholder="input[type='password']" className={inputClass} />
-                </Field>
-              </div>
-            </FormSection>
-
-            <FormSection
-              eyebrow="Scope"
-              title="Modules and CRUD coverage"
-              description="Limit the run to the sections you name and choose whether the agent should focus on create, read, update, and delete behavior."
-            >
-              <div className="grid gap-4 lg:grid-cols-2">
-                <Field label="CRUD module paths">
-                  <textarea
-                    value={form.include_paths}
-                    onChange={(event) => setForm({ ...form, include_paths: event.target.value })}
-                    rows={4}
-                    placeholder={"/customer-credit-note/*\n/sales-invoice/*"}
-                    className={`${inputClass} min-h-28`}
-                  />
-                </Field>
-                <Field label="Excluded paths">
-                  <textarea
-                    value={form.exclude_paths}
-                    onChange={(event) => setForm({ ...form, exclude_paths: event.target.value })}
-                    rows={4}
-                    placeholder={"/reports/*\n/settings/audit-log"}
-                    className={`${inputClass} min-h-28`}
-                  />
-                </Field>
-              </div>
-              <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                <Toggle label="CRUD mode" checked={form.crud_mode} onChange={(checked) => setForm({ ...form, crud_mode: checked })} />
-                <Toggle label="Create checks" checked={form.crud_create} onChange={(checked) => setForm({ ...form, crud_create: checked })} />
-                <Toggle label="Read checks" checked={form.crud_read} onChange={(checked) => setForm({ ...form, crud_read: checked })} />
-                <Toggle label="Update checks" checked={form.crud_update} onChange={(checked) => setForm({ ...form, crud_update: checked })} />
-                <Toggle label="Delete checks" checked={form.crud_delete} onChange={(checked) => setForm({ ...form, crud_delete: checked })} />
-                <Toggle
-                  label="Allow destructive actions"
-                  checked={form.allow_destructive_actions}
-                  onChange={(checked) => setForm({ ...form, allow_destructive_actions: checked })}
-                />
-              </div>
-            </FormSection>
-
-            <FormSection
-              eyebrow="Depth"
-              title="Execution settings"
-              description="Increase the step budget for large menu trees. Safe mode still blocks destructive actions unless you explicitly enable destructive CRUD coverage above."
-            >
-              <div className="grid gap-4 lg:grid-cols-[0.8fr_1.2fr]">
-                <Field label="Max steps">
-                  <input type="number" min={1} max={1000} value={form.max_steps} onChange={(event) => setForm({ ...form, max_steps: Number(event.target.value) })} className={inputClass} />
-                </Field>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <Toggle label="Safe mode" checked={form.safe_mode} onChange={(checked) => setForm({ ...form, safe_mode: checked })} />
-                  <Toggle label="Headless browser" checked={form.headless} onChange={(checked) => setForm({ ...form, headless: checked })} />
+            <form className="mt-6 grid gap-4" onSubmit={launchRun}>
+              <FormSection
+                eyebrow="Scope"
+                title="Target and navigation"
+                description="Point the run at the app entry page and keep the domain list tight so the explorer stays on the product under test."
+              >
+                <div className="grid gap-4 md:grid-cols-2">
+                  <Field label="Name">
+                    <input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} className={inputClass} />
+                  </Field>
+                  <Field label="Target URL">
+                    <input value={form.target_url} onChange={(event) => setForm({ ...form, target_url: event.target.value })} className={inputClass} />
+                  </Field>
+                  <Field label="Allowed domains">
+                    <input value={form.allowed_domains} onChange={(event) => setForm({ ...form, allowed_domains: event.target.value })} placeholder="example.com, admin.example.com" className={inputClass} />
+                  </Field>
+                  <Field label="Notes">
+                    <textarea value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} rows={3} className={`${inputClass} min-h-24`} />
+                  </Field>
                 </div>
+              </FormSection>
+
+              <FormSection
+                eyebrow="Auth"
+                title="Login details"
+                description="Use these fields when the run must sign in before it can reach the real menu structure and form surfaces."
+              >
+                <div className="grid gap-4 md:grid-cols-2">
+                  <Field label="Login URL">
+                    <input value={form.login_url} onChange={(event) => setForm({ ...form, login_url: event.target.value })} className={inputClass} />
+                  </Field>
+                  <Field label="Submit selector">
+                    <input value={form.submit_selector} onChange={(event) => setForm({ ...form, submit_selector: event.target.value })} placeholder="button[type='submit']" className={inputClass} />
+                  </Field>
+                  <Field label="Username">
+                    <input value={form.username} onChange={(event) => setForm({ ...form, username: event.target.value })} className={inputClass} />
+                  </Field>
+                  <Field label="Password">
+                    <input type="password" value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} className={inputClass} />
+                  </Field>
+                  <Field label="Username selector">
+                    <input value={form.username_selector} onChange={(event) => setForm({ ...form, username_selector: event.target.value })} placeholder="input[name='email']" className={inputClass} />
+                  </Field>
+                  <Field label="Password selector">
+                    <input value={form.password_selector} onChange={(event) => setForm({ ...form, password_selector: event.target.value })} placeholder="input[type='password']" className={inputClass} />
+                  </Field>
+                </div>
+              </FormSection>
+
+              <FormSection
+                eyebrow="Scope"
+                title="Modules and CRUD coverage"
+                description="Limit the run to the sections you name and choose whether the agent should focus on create, read, update, and delete behavior."
+              >
+                <div className="grid gap-4 lg:grid-cols-2">
+                  <Field label="CRUD module paths">
+                    <textarea
+                      value={form.include_paths}
+                      onChange={(event) => setForm({ ...form, include_paths: event.target.value })}
+                      rows={4}
+                      placeholder={"/customer-credit-note/*\n/sales-invoice/*"}
+                      className={`${inputClass} min-h-28`}
+                    />
+                  </Field>
+                  <Field label="Excluded paths">
+                    <textarea
+                      value={form.exclude_paths}
+                      onChange={(event) => setForm({ ...form, exclude_paths: event.target.value })}
+                      rows={4}
+                      placeholder={"/reports/*\n/settings/audit-log"}
+                      className={`${inputClass} min-h-28`}
+                    />
+                  </Field>
+                </div>
+                <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                  <Toggle label="CRUD mode" checked={form.crud_mode} onChange={(checked) => setForm({ ...form, crud_mode: checked })} />
+                  <Toggle label="Create checks" checked={form.crud_create} onChange={(checked) => setForm({ ...form, crud_create: checked })} />
+                  <Toggle label="Read checks" checked={form.crud_read} onChange={(checked) => setForm({ ...form, crud_read: checked })} />
+                  <Toggle label="Update checks" checked={form.crud_update} onChange={(checked) => setForm({ ...form, crud_update: checked })} />
+                  <Toggle label="Delete checks" checked={form.crud_delete} onChange={(checked) => setForm({ ...form, crud_delete: checked })} />
+                  <Toggle
+                    label="Allow destructive actions"
+                    checked={form.allow_destructive_actions}
+                    onChange={(checked) => setForm({ ...form, allow_destructive_actions: checked })}
+                  />
+                </div>
+              </FormSection>
+
+              <FormSection
+                eyebrow="Depth"
+                title="Execution settings"
+                description="Increase the step budget for large menu trees. Safe mode still blocks destructive actions unless you explicitly enable destructive CRUD coverage above."
+              >
+                <div className="grid gap-4 lg:grid-cols-[0.8fr_1.2fr]">
+                  <Field label="Max steps">
+                    <input type="number" min={1} max={1000} value={form.max_steps} onChange={(event) => setForm({ ...form, max_steps: Number(event.target.value) })} className={inputClass} />
+                  </Field>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <Toggle label="Safe mode" checked={form.safe_mode} onChange={(checked) => setForm({ ...form, safe_mode: checked })} />
+                    <Toggle label="Headless browser" checked={form.headless} onChange={(checked) => setForm({ ...form, headless: checked })} />
+                  </div>
+                </div>
+              </FormSection>
+
+              {error ? <p className="rounded-2xl bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</p> : null}
+              {feedback ? (
+                <p aria-live="polite" className="rounded-2xl bg-cyan-50 px-4 py-3 text-sm text-cyan-900">
+                  {feedback}
+                </p>
+              ) : null}
+
+              <div className="rounded-[22px] border border-slate/10 bg-sand/50 px-4 py-4 text-sm leading-6 text-slate/80">
+                AutoQA will:
+                <br />
+                stay inside the sections you specify,
+                <br />
+                fill visible form fields including dropdowns and toggles,
+                <br />
+                run validation and happy-path form submits when possible,
+                <br />
+                and optionally include explicit CRUD coverage with delete only when you opt in.
               </div>
-            </FormSection>
 
-            {error ? <p className="rounded-2xl bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</p> : null}
-            {feedback ? (
-              <p aria-live="polite" className="rounded-2xl bg-cyan-50 px-4 py-3 text-sm text-cyan-900">
-                {feedback}
-              </p>
-            ) : null}
+              <button
+                type="submit"
+                disabled={isLaunching}
+                className="inline-flex items-center gap-2 rounded-full bg-ink px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isLaunching ? "Launching..." : "Create config and start run"}
+                <ArrowRight className="h-4 w-4" />
+              </button>
+            </form>
+          </Panel>
+        </section>
+      ) : null}
 
-            <div className="rounded-[22px] border border-slate/10 bg-sand/50 px-4 py-4 text-sm leading-6 text-slate/80">
-              AutoQA will:
-              <br />
-              stay inside the sections you specify,
-              <br />
-              fill visible form fields including dropdowns and toggles,
-              <br />
-              run validation and happy-path form submits when possible,
-              <br />
-              and optionally include explicit CRUD coverage with delete only when you opt in.
-            </div>
+      {activeTab === "guide" ? (
+        <>
+          <section className="grid gap-4 lg:grid-cols-3">
+            <GuideCard
+              title="Discover pages"
+              description="The agent keeps a queue of same-domain links and revisits newly discovered pages so forms hidden behind nav items are easier to reach."
+            />
+            <GuideCard
+              title="Exercise forms"
+              description="For each visible form, the run now tries validation-focused scenarios first and then a happy-path submit when the form stays available."
+            />
+            <GuideCard
+              title="Create bug handoff"
+              description="Failures are stored with a tester-friendly title, bug description, reproduction steps, actual result, expected result, and downloadable evidence."
+            />
+          </section>
 
-            <button
-              type="submit"
-              disabled={isLaunching}
-              className="inline-flex items-center gap-2 rounded-full bg-ink px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {isLaunching ? "Launching..." : "Create config and start run"}
-              <ArrowRight className="h-4 w-4" />
-            </button>
-          </form>
-        </Panel>
-      </section>
+          <section className="grid gap-4 lg:grid-cols-4">
+            <WorkflowStep
+              step="1"
+              title="Start at the main app"
+              description="Use the first page a tester would open after login so menu branches can fan out from there."
+            />
+            <WorkflowStep
+              step="2"
+              title="Let AutoQA walk menus"
+              description="The explorer clicks through safe navigation, create, and edit actions, then backtracks to continue into other branches."
+            />
+            <WorkflowStep
+              step="3"
+              title="Review bug cards"
+              description="Each issue card is written to be reused as a bug title plus actual result, expected result, and reproduction steps."
+            />
+            <WorkflowStep
+              step="4"
+              title="File in ClickUp"
+              description="Attach the screenshot, trace, and markdown/json report to give developers direct evidence."
+            />
+          </section>
+        </>
+      ) : null}
 
-      <section className="grid gap-4 lg:grid-cols-3">
-        <GuideCard
-          title="Discover pages"
-          description="The agent keeps a queue of same-domain links and revisits newly discovered pages so forms hidden behind nav items are easier to reach."
-        />
-        <GuideCard
-          title="Exercise forms"
-          description="For each visible form, the run now tries validation-focused scenarios first and then a happy-path submit when the form stays available."
-        />
-        <GuideCard
-          title="Create bug handoff"
-          description="Failures are stored with a tester-friendly title, bug description, reproduction steps, actual result, expected result, and downloadable evidence."
-        />
-      </section>
-
-      <section className="grid gap-4 lg:grid-cols-4">
-        <WorkflowStep
-          step="1"
-          title="Start at the main app"
-          description="Use the first page a tester would open after login so menu branches can fan out from there."
-        />
-        <WorkflowStep
-          step="2"
-          title="Let AutoQA walk menus"
-          description="The explorer clicks through safe navigation, create, and edit actions, then backtracks to continue into other branches."
-        />
-        <WorkflowStep
-          step="3"
-          title="Review bug cards"
-          description="Each issue card is written to be reused as a bug title plus actual result, expected result, and reproduction steps."
-        />
-        <WorkflowStep
-          step="4"
-          title="File in ClickUp"
-          description="Attach the screenshot, trace, and markdown/json report to give developers direct evidence."
-        />
-      </section>
-
-      <section className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
+      {activeTab === "activity" ? (
+        <section className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
         <Panel>
           <div className="flex items-center justify-between">
             <div>
@@ -528,7 +557,8 @@ export function Dashboard() {
             )}
           </div>
         </Panel>
-      </section>
+        </section>
+      ) : null}
       {confirmAction ? (
         <ConfirmDialog
           title={confirmTitle(confirmAction)}
@@ -548,6 +578,34 @@ export function Dashboard() {
         />
       ) : null}
     </main>
+  );
+}
+
+function TabButton({
+  label,
+  description,
+  active,
+  onClick,
+}: {
+  label: string;
+  description: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={`min-w-[180px] rounded-[22px] border px-4 py-3 text-left transition ${
+        active
+          ? "border-ink/15 bg-white shadow-pane"
+          : "border-slate/10 bg-white/60 hover:border-slate/20 hover:bg-white/85"
+      }`}
+    >
+      <span className="block font-display text-lg font-semibold text-ink">{label}</span>
+      <span className="mt-1 block text-sm text-slate/70">{description}</span>
+    </button>
   );
 }
 
