@@ -12,8 +12,8 @@ class Settings(BaseSettings):
     database_fallback_url: str | None = None
     redis_url: str = "redis://localhost:6379/0"
     api_public_base_url: str = "http://localhost:8000"
-    artifacts_root: Path = Field(default=Path("/workspace/artifacts"))
-    generated_tests_root: Path = Field(default=Path("/workspace/generated-tests"))
+    artifacts_root: Path = Field(default=Path(".runtime/artifacts"))
+    generated_tests_root: Path = Field(default=Path(".runtime/generated-tests"))
     runtime_root: Path = Field(default=Path(".runtime"))
     playwright_headless: bool = True
     safe_mode_default: bool = True
