@@ -43,3 +43,8 @@ jobs:
         env:
           PYTHONPATH: ${{ github.workspace }}/packages/python:${{ github.workspace }}/apps/api:${{ github.workspace }}/apps/worker
         run: python -c "import worker.main, app.main, autoqa_shared.queue"
+
+      - name: Run Python smoke tests
+        env:
+          PYTHONPATH: ${{ github.workspace }}/packages/python:${{ github.workspace }}/apps/api:${{ github.workspace }}/apps/worker
+        run: python -m unittest -v tests.test_explorer_sampling tests.test_db_fallback
