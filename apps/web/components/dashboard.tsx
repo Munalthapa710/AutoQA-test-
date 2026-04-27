@@ -342,7 +342,7 @@ export function Dashboard() {
                     />
                   </Field>
                 </div>
-                <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                <div className="mt-4 grid items-stretch gap-3 md:grid-cols-2 xl:grid-cols-3">
                   <Toggle label="CRUD mode" checked={form.crud_mode} onChange={(checked) => setForm({ ...form, crud_mode: checked })} />
                   <Toggle label="Create checks" checked={form.crud_create} onChange={(checked) => setForm({ ...form, crud_create: checked })} />
                   <Toggle label="Read checks" checked={form.crud_read} onChange={(checked) => setForm({ ...form, crud_read: checked })} />
@@ -361,14 +361,16 @@ export function Dashboard() {
                 title="Execution settings"
                 description="Increase the step budget for large menu trees. Safe mode still blocks destructive actions unless you explicitly enable destructive CRUD coverage above."
               >
-                <div className="grid gap-4 lg:grid-cols-[0.8fr_1.2fr]">
-                  <Field label="Max steps">
-                    <input type="number" min={1} max={1000} value={form.max_steps} onChange={(event) => setForm({ ...form, max_steps: Number(event.target.value) })} className={inputClass} />
-                  </Field>
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <Toggle label="Safe mode" checked={form.safe_mode} onChange={(checked) => setForm({ ...form, safe_mode: checked })} />
-                    <Toggle label="Headless browser" checked={form.headless} onChange={(checked) => setForm({ ...form, headless: checked })} />
-                  </div>
+                <div className="grid items-stretch gap-3 md:grid-cols-3">
+                  <NumberSetting
+                    label="Max steps"
+                    value={form.max_steps}
+                    min={1}
+                    max={1000}
+                    onChange={(value) => setForm({ ...form, max_steps: value })}
+                  />
+                  <Toggle label="Safe mode" checked={form.safe_mode} onChange={(checked) => setForm({ ...form, safe_mode: checked })} />
+                  <Toggle label="Headless browser" checked={form.headless} onChange={(checked) => setForm({ ...form, headless: checked })} />
                 </div>
               </FormSection>
 
@@ -646,7 +648,7 @@ function FormSection({
   children: React.ReactNode;
 }) {
   return (
-    <div className="rounded-[24px] border border-slate/10 bg-sand/40 px-4 py-5">
+    <div className="rounded-xl border border-slate/10 bg-white/70 px-4 py-5 shadow-sm">
       <p className="font-mono text-xs uppercase tracking-[0.22em] text-slate/55">{eyebrow}</p>
       <h3 className="mt-2 font-display text-xl font-semibold text-ink">{title}</h3>
       <p className="mt-2 text-sm leading-6 text-slate/75">{description}</p>
@@ -677,6 +679,39 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
+function NumberSetting({
+  label,
+  value,
+  min,
+  max,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <label className="flex min-h-[88px] w-full items-center justify-between gap-4 rounded-xl border border-slate/10 bg-sand/50 px-4 py-3 transition focus-within:border-ember focus-within:bg-white">
+      <span className="min-w-0">
+        <span className="block text-sm font-semibold text-ink">{label}</span>
+        <span className="mt-1 block text-xs uppercase tracking-[0.18em] text-slate/55">
+          {min}-{max}
+        </span>
+      </span>
+      <input
+        type="number"
+        min={min}
+        max={max}
+        value={value}
+        onChange={(event) => onChange(Number(event.target.value))}
+        className="h-11 w-24 shrink-0 rounded-lg border border-slate/10 bg-white px-3 text-right text-sm font-semibold text-ink outline-none transition focus:border-ember"
+      />
+    </label>
+  );
+}
+
 function Toggle({
   label,
   checked,
@@ -691,7 +726,7 @@ function Toggle({
       type="button"
       onClick={() => onChange(!checked)}
       aria-pressed={checked}
-      className={`flex min-h-[76px] items-center justify-between rounded-[22px] border px-4 py-3 text-left transition ${
+      className={`flex min-h-[88px] w-full items-center justify-between rounded-xl border px-4 py-3 text-left transition focus:outline-none focus:ring-2 focus:ring-ember/30 ${
         checked
           ? "border-ink/15 bg-white shadow-sm"
           : "border-slate/10 bg-sand/60 hover:border-slate/20 hover:bg-white/80"
@@ -702,13 +737,13 @@ function Toggle({
         <span className="mt-1 block text-xs uppercase tracking-[0.18em] text-slate/55">{checked ? "Enabled" : "Disabled"}</span>
       </span>
       <span
-        className={`relative inline-flex h-8 w-14 shrink-0 items-center rounded-full p-1 transition ${
+        className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full p-1 transition ${
           checked ? "bg-ink" : "bg-slate/20"
         }`}
       >
         <span
-          className={`h-6 w-6 rounded-full bg-white shadow-sm transition-transform ${
-            checked ? "translate-x-6" : "translate-x-0"
+          className={`h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${
+            checked ? "translate-x-5" : "translate-x-0"
           }`}
         />
       </span>
@@ -865,4 +900,4 @@ function confirmButtonLabel(
 }
 
 const inputClass =
-  "w-full rounded-2xl border border-slate/10 bg-sand/60 px-4 py-3 text-sm text-ink outline-none transition placeholder:text-slate/45 focus:border-ember focus:bg-white";
+  "w-full rounded-xl border border-slate/10 bg-sand/50 px-4 py-3 text-sm text-ink outline-none transition placeholder:text-slate/45 focus:border-ember focus:bg-white focus:ring-2 focus:ring-ember/15";
