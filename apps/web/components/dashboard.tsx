@@ -33,6 +33,14 @@ type ConfigFormState = {
   safe_mode: boolean;
   headless: boolean;
   allowed_domains: string;
+  include_paths: string;
+  exclude_paths: string;
+  crud_mode: boolean;
+  crud_create: boolean;
+  crud_read: boolean;
+  crud_update: boolean;
+  crud_delete: boolean;
+  allow_destructive_actions: boolean;
   notes: string;
 };
 
@@ -49,6 +57,14 @@ const DEFAULT_FORM: ConfigFormState = {
   safe_mode: true,
   headless: true,
   allowed_domains: "",
+  include_paths: "",
+  exclude_paths: "",
+  crud_mode: false,
+  crud_create: true,
+  crud_read: true,
+  crud_update: true,
+  crud_delete: false,
+  allow_destructive_actions: false,
   notes: "",
 };
 
@@ -129,6 +145,22 @@ export function Dashboard() {
           .split(",")
           .map((item) => item.trim())
           .filter(Boolean),
+        include_paths: form.include_paths
+          .split(/[\n,]+/)
+          .map((item) => item.trim())
+          .filter(Boolean),
+        exclude_paths: form.exclude_paths
+          .split(/[\n,]+/)
+          .map((item) => item.trim())
+          .filter(Boolean),
+        crud_mode: form.crud_mode,
+        crud_actions: [
+          form.crud_create ? "create" : null,
+          form.crud_read ? "read" : null,
+          form.crud_update ? "update" : null,
+          form.crud_delete ? "delete" : null,
+        ].filter((item): item is string => item !== null),
+        allow_destructive_actions: form.allow_destructive_actions,
       });
 
       const run = await api.createRun(created.id);
@@ -263,9 +295,48 @@ export function Dashboard() {
             </FormSection>
 
             <FormSection
+              eyebrow="Scope"
+              title="Modules and CRUD coverage"
+              description="Limit the run to the sections you name and choose whether the agent should focus on create, read, update, and delete behavior."
+            >
+              <div className="grid gap-4 lg:grid-cols-2">
+                <Field label="CRUD module paths">
+                  <textarea
+                    value={form.include_paths}
+                    onChange={(event) => setForm({ ...form, include_paths: event.target.value })}
+                    rows={4}
+                    placeholder={"/customer-credit-note/*\n/sales-invoice/*"}
+                    className={`${inputClass} min-h-28`}
+                  />
+                </Field>
+                <Field label="Excluded paths">
+                  <textarea
+                    value={form.exclude_paths}
+                    onChange={(event) => setForm({ ...form, exclude_paths: event.target.value })}
+                    rows={4}
+                    placeholder={"/reports/*\n/settings/audit-log"}
+                    className={`${inputClass} min-h-28`}
+                  />
+                </Field>
+              </div>
+              <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                <Toggle label="CRUD mode" checked={form.crud_mode} onChange={(checked) => setForm({ ...form, crud_mode: checked })} />
+                <Toggle label="Create checks" checked={form.crud_create} onChange={(checked) => setForm({ ...form, crud_create: checked })} />
+                <Toggle label="Read checks" checked={form.crud_read} onChange={(checked) => setForm({ ...form, crud_read: checked })} />
+                <Toggle label="Update checks" checked={form.crud_update} onChange={(checked) => setForm({ ...form, crud_update: checked })} />
+                <Toggle label="Delete checks" checked={form.crud_delete} onChange={(checked) => setForm({ ...form, crud_delete: checked })} />
+                <Toggle
+                  label="Allow destructive actions"
+                  checked={form.allow_destructive_actions}
+                  onChange={(checked) => setForm({ ...form, allow_destructive_actions: checked })}
+                />
+              </div>
+            </FormSection>
+
+            <FormSection
               eyebrow="Depth"
               title="Execution settings"
-              description="Increase the step budget for large menu trees. Safe mode avoids destructive actions while still allowing create/edit form coverage."
+              description="Increase the step budget for large menu trees. Safe mode still blocks destructive actions unless you explicitly enable destructive CRUD coverage above."
             >
               <div className="grid gap-4 lg:grid-cols-[0.8fr_1.2fr]">
                 <Field label="Max steps">
@@ -288,13 +359,13 @@ export function Dashboard() {
             <div className="rounded-[22px] border border-slate/10 bg-sand/50 px-4 py-4 text-sm leading-6 text-slate/80">
               AutoQA will:
               <br />
-              discover same-domain pages,
+              stay inside the sections you specify,
               <br />
-              fill visible form fields,
+              fill visible form fields including dropdowns and toggles,
               <br />
-              submit invalid and valid form variants when possible,
+              run validation and happy-path form submits when possible,
               <br />
-              and generate bug evidence you can hand to developers or paste into ClickUp.
+              and optionally include explicit CRUD coverage with delete only when you opt in.
             </div>
 
             <button

@@ -12,6 +12,11 @@ export type TestConfig = {
   safe_mode: boolean;
   max_steps: number;
   allowed_domains: string[];
+  include_paths: string[];
+  exclude_paths: string[];
+  crud_mode: boolean;
+  crud_actions: string[];
+  allow_destructive_actions: boolean;
   notes: string | null;
   created_at: string;
   updated_at: string;

@@ -175,9 +175,19 @@ class RunControlsApiTests(unittest.TestCase):
                 "safe_mode": True,
                 "max_steps": 5,
                 "allowed_domains": [],
+                "include_paths": ["/customer-credit-note/*"],
+                "exclude_paths": ["/reports/*"],
+                "crud_mode": True,
+                "crud_actions": ["create", "read", "update", "delete"],
+                "allow_destructive_actions": True,
             },
         )
         self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.json()["include_paths"], ["/customer-credit-note/*"])
+        self.assertEqual(response.json()["exclude_paths"], ["/reports/*"])
+        self.assertEqual(response.json()["crud_actions"], ["create", "read", "update", "delete"])
+        self.assertTrue(response.json()["crud_mode"])
+        self.assertTrue(response.json()["allow_destructive_actions"])
         return response.json()["id"]
 
     def _set_run_state(

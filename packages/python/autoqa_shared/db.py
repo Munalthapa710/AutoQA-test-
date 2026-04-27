@@ -51,12 +51,46 @@ def _ensure_sqlite_schema(engine) -> None:
 def _apply_sqlite_compat_migrations(engine) -> None:
     with engine.connect() as connection:
         inspector = inspect(connection)
-        if "test_runs" not in inspector.get_table_names():
-            return
-        columns = {column["name"] for column in inspector.get_columns("test_runs")}
+        has_test_configs = "test_configs" in inspector.get_table_names()
+        if has_test_configs:
+            config_columns = {column["name"] for column in inspector.get_columns("test_configs")}
+        else:
+            config_columns = set()
+        has_test_runs = "test_runs" in inspector.get_table_names()
+        if not has_test_runs:
+            run_columns = set()
+        else:
+            run_columns = {column["name"] for column in inspector.get_columns("test_runs")}
 
     with engine.begin() as connection:
-        if "control_state" not in columns:
+        if has_test_configs and "include_paths" not in config_columns:
+            connection.execute(text("ALTER TABLE test_configs ADD COLUMN include_paths JSON"))
+            connection.execute(text("UPDATE test_configs SET include_paths = '[]' WHERE include_paths IS NULL"))
+        if has_test_configs and "exclude_paths" not in config_columns:
+            connection.execute(text("ALTER TABLE test_configs ADD COLUMN exclude_paths JSON"))
+            connection.execute(text("UPDATE test_configs SET exclude_paths = '[]' WHERE exclude_paths IS NULL"))
+        if has_test_configs and "crud_mode" not in config_columns:
+            connection.execute(text("ALTER TABLE test_configs ADD COLUMN crud_mode BOOLEAN"))
+            connection.execute(text("UPDATE test_configs SET crud_mode = 0 WHERE crud_mode IS NULL"))
+        if has_test_configs and "crud_actions" not in config_columns:
+            connection.execute(text("ALTER TABLE test_configs ADD COLUMN crud_actions JSON"))
+            connection.execute(
+                text(
+                    "UPDATE test_configs "
+                    "SET crud_actions = '[\"create\", \"read\", \"update\"]' "
+                    "WHERE crud_actions IS NULL"
+                )
+            )
+        if has_test_configs and "allow_destructive_actions" not in config_columns:
+            connection.execute(text("ALTER TABLE test_configs ADD COLUMN allow_destructive_actions BOOLEAN"))
+            connection.execute(
+                text(
+                    "UPDATE test_configs "
+                    "SET allow_destructive_actions = 0 "
+                    "WHERE allow_destructive_actions IS NULL"
+                )
+            )
+        if has_test_runs and "control_state" not in run_columns:
             connection.execute(text("ALTER TABLE test_runs ADD COLUMN control_state VARCHAR(32)"))
             connection.execute(
                 text(

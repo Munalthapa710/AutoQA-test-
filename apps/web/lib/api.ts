@@ -284,6 +284,17 @@ export const api = {
           allowed_domains: Array.isArray(payload.allowed_domains)
             ? payload.allowed_domains.filter((item): item is string => typeof item === "string")
             : [],
+          include_paths: Array.isArray(payload.include_paths)
+            ? payload.include_paths.filter((item): item is string => typeof item === "string")
+            : [],
+          exclude_paths: Array.isArray(payload.exclude_paths)
+            ? payload.exclude_paths.filter((item): item is string => typeof item === "string")
+            : [],
+          crud_mode: payload.crud_mode === true,
+          crud_actions: Array.isArray(payload.crud_actions)
+            ? payload.crud_actions.filter((item): item is string => typeof item === "string")
+            : ["create", "read", "update"],
+          allow_destructive_actions: payload.allow_destructive_actions === true,
           notes: (payload.notes as string | null | undefined) ?? null,
           created_at: timestamp,
           updated_at: timestamp,
@@ -321,7 +332,15 @@ export const api = {
           started_at: null,
           ended_at: null,
           run_settings: {
+            target_url: config.target_url,
+            login_url: config.login_url,
             headless: config.headless,
+            allowed_domains: config.allowed_domains,
+            include_paths: config.include_paths,
+            exclude_paths: config.exclude_paths,
+            crud_mode: config.crud_mode,
+            crud_actions: config.crud_actions,
+            allow_destructive_actions: config.allow_destructive_actions,
           },
           summary: {},
           error_message: "Backend unavailable. This run is stored locally until the API is available.",

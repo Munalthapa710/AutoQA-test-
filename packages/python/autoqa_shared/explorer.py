@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import fnmatch
 import json
 import re
+import time
 from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urljoin, urlparse
@@ -10,7 +12,7 @@ from urllib.parse import urljoin, urlparse
 from langgraph.graph import END, StateGraph
 from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
-from playwright.async_api import async_playwright
+from playwright.async_api import Page, async_playwright
 from sqlalchemy.orm import Session
 
 from .artifact_storage import ArtifactStorage, slugify
@@ -87,10 +89,13 @@ class ExplorationEngine:
         }
 
         try:
-            final_state = await graph.ainvoke(
-                initial_state,
-                config={"recursion_limit": max(50, run.max_steps * 8)},
-            )
+            if self._use_deterministic_crud(config):
+                final_state = await self._run_deterministic_crud(initial_state)
+            else:
+                final_state = await graph.ainvoke(
+                    initial_state,
+                    config={"recursion_limit": max(50, run.max_steps * 8)},
+                )
             await self._finalize_run(final_state, failed=False)
         except RunStoppedError as exc:
             await self._close_runtime(initial_state)
@@ -128,10 +133,78 @@ class ExplorationEngine:
         workflow.add_edge("finalize", END)
         return workflow.compile()
 
+    def _use_deterministic_crud(self, config: TestConfig) -> bool:
+        return bool(config.crud_mode and self._crud_module_paths(config))
+
+    def _crud_module_paths(self, config: TestConfig) -> list[str]:
+        modules: list[str] = []
+        for pattern in self._normalized_scope_patterns(config.include_paths):
+            module_path = pattern.split("*", 1)[0].rstrip("/") or "/"
+            if module_path not in modules:
+                modules.append(module_path)
+        return modules
+
+    def _absolute_module_url(self, config: TestConfig, module_path: str) -> str:
+        parsed = urlparse(config.target_url)
+        origin = f"{parsed.scheme}://{parsed.netloc}"
+        return urljoin(f"{origin}/", module_path.lstrip("/"))
+
+    def _build_record_fixture(self, module_path: str) -> dict[str, Any]:
+        seed = str(int(time.time() * 1000))[-8:]
+        module_name = (module_path.strip("/").split("/")[-1] or "record").replace("-", " ").title()
+        identity = f"AutoQA {module_name} {seed}"
+        return {
+            "seed": seed,
+            "identity": identity,
+            "updated_identity": f"{identity} Updated",
+            "email": f"autoqa.{seed}@example.com",
+            "updated_email": f"autoqa.updated.{seed}@example.com",
+            "phone": "9800000001",
+            "updated_phone": "9800000002",
+            "address": "Kathmandu Test Address",
+            "updated_address": "Lalitpur Updated Address",
+            "tax_registration_no": "123456789",
+            "updated_tax_registration_no": "987654321",
+            "pan_number": "987654321",
+            "updated_pan_number": "123456789",
+            "credit_limit": "123456",
+            "updated_credit_limit": "654321",
+            "description": f"AutoQA {module_name} description {seed}",
+            "updated_description": f"AutoQA {module_name} updated description {seed}",
+        }
+
+    def _xpath_literal(self, value: str) -> str:
+        if "'" not in value:
+            return f"'{value}'"
+        if '"' not in value:
+            return f'"{value}"'
+        parts = value.split("'")
+        return "concat(" + ", \"'\", ".join(f"'{part}'" for part in parts) + ")"
+
     async def _bootstrap(self, state: GraphState) -> GraphState:
         config: TestConfig = state["config"]
         playwright = await async_playwright().start()
-        browser = await playwright.chromium.launch(headless=config.headless)
+        launch_attempts: list[dict[str, object]] = []
+        if config.headless:
+            # Prefer the full Chromium binary in headless mode before falling back to
+            # Playwright's legacy headless shell, which is less reliable in some sandboxes.
+            launch_attempts.append({"headless": True, "channel": "chromium"})
+        launch_attempts.append({"headless": config.headless})
+
+        browser = None
+        last_launch_error: Exception | None = None
+        for launch_options in launch_attempts:
+            try:
+                browser = await playwright.chromium.launch(**launch_options)
+                break
+            except Exception as exc:
+                last_launch_error = exc
+
+        if browser is None:
+            await playwright.stop()
+            assert last_launch_error is not None
+            raise last_launch_error
+
         context = await browser.new_context(ignore_https_errors=True)
         page = await context.new_page()
         tools = PlaywrightTools(page=page, context=context, storage=self.storage, run_id=state["run"].id)
@@ -202,6 +275,11 @@ class ExplorationEngine:
             except PlaywrightTimeoutError:
                 pass
 
+            target_url = self._normalized_url(config.target_url).geturl()
+            current_url = self._normalized_url(page.url).geturl()
+            if current_url != target_url:
+                await tools.open_page(target_url)
+
             screenshot_path = await tools.capture_screenshot(state["steps_taken"], "login-result")
             step = await self._append_step(
                 run=state["run"],
@@ -267,6 +345,323 @@ class ExplorationEngine:
             state["steps_taken"] += 1
         return state
 
+    async def _run_deterministic_crud(self, state: GraphState) -> GraphState:
+        state = await self._bootstrap(state)
+        state = await self._deterministic_login(state)
+
+        config: TestConfig = state["config"]
+        tools: PlaywrightTools = state["tools"]
+        for module_path in self._crud_module_paths(config):
+            await self._await_run_signal(state)
+            if state["steps_taken"] >= state["run"].max_steps:
+                break
+            try:
+                await self._run_deterministic_module(state, module_path)
+            except RunStoppedError:
+                raise
+            except Exception as exc:
+                self._record_failure(
+                    run_id=state["run"].id,
+                    failure_type=FailureType.EXPLORATION.value,
+                    title=f"Deterministic CRUD failed for {module_path}",
+                    description=str(exc),
+                    evidence={"module_path": module_path, "url": state["page"].url},
+                    step_id=state.get("last_step_id"),
+                    severity="high",
+                )
+
+        trace_path = await tools.save_trace()
+        if trace_path:
+            self._record_artifact(None, state["run"].id, ArtifactType.TRACE.value, trace_path, "application/zip")
+        state["page_state"] = await tools.get_page_state()
+        return state
+
+    async def _deterministic_login(self, state: GraphState) -> GraphState:
+        config: TestConfig = state["config"]
+        if not config.username or not config.password:
+            return state
+
+        page: Page = state["page"]
+        tools: PlaywrightTools = state["tools"]
+        login_url = self._normalized_url(config.login_url or config.target_url).geturl()
+        target_url = self._normalized_url(config.target_url).geturl()
+
+        try:
+            exact_username = page.get_by_placeholder("e.g example@email.com", exact=False)
+            exact_password = page.get_by_placeholder("Enter your password", exact=False)
+            exact_sign_in = page.get_by_role("button", name=re.compile("^sign in$", re.I))
+
+            if await exact_username.count() and await exact_password.count() and await exact_sign_in.count():
+                await exact_username.first.fill(config.username)
+                await exact_password.first.fill(config.password)
+                await exact_sign_in.first.click()
+                try:
+                    await page.wait_for_url(re.compile(r".*/dashboard/?(?:[#?].*)?$", re.I), timeout=15_000)
+                except PlaywrightTimeoutError:
+                    try:
+                        await page.wait_for_load_state("networkidle", timeout=10_000)
+                    except PlaywrightTimeoutError:
+                        pass
+            else:
+                username_locator = page.locator(
+                    "input[type='email'], input[name*='email' i], input[name*='user' i], input[placeholder*='email' i]"
+                ).first
+                password_locator = page.locator(
+                    "input[type='password'], input[name*='password' i], input[placeholder*='password' i]"
+                ).first
+                await username_locator.fill(config.username)
+                await password_locator.fill(config.password)
+
+                if config.submit_selector:
+                    await page.locator(config.submit_selector).first.click()
+                else:
+                    submit = page.get_by_role("button", name=re.compile("sign in|login|log in", re.I))
+                    if await submit.count() == 0:
+                        submit = page.locator("button[type='submit'], input[type='submit']")
+                    await submit.first.click()
+
+                try:
+                    await page.wait_for_load_state("networkidle", timeout=10_000)
+                except PlaywrightTimeoutError:
+                    pass
+
+            if self._normalized_url(page.url).geturl() != target_url:
+                await tools.open_page(target_url)
+                try:
+                    await page.wait_for_load_state("networkidle", timeout=10_000)
+                except PlaywrightTimeoutError:
+                    pass
+
+            current_url = self._normalized_url(page.url).geturl()
+            authenticated = current_url != login_url and "/login" not in urlparse(current_url).path.lower()
+            if not authenticated:
+                raise RuntimeError("Login did not complete successfully; the target path redirected back to the login page.")
+
+            await self._record_manual_step(
+                state,
+                node_name="login",
+                action="submit_login",
+                rationale="Executed the configured login flow before running deterministic CRUD checks.",
+                risk_level=RiskLevel.RISKY.value,
+                status=StepStatus.PASSED.value,
+                details={"url": page.url, "title": await page.title()},
+                locator={"strategy": "custom", "selector": config.submit_selector or "login-submit"},
+                element_label="Login submission",
+                successful_action={"type": "login", "label": "Submit login", "url": page.url},
+            )
+            return state
+        except Exception as exc:
+            step = await self._record_manual_step(
+                state,
+                node_name="login",
+                action="submit_login",
+                rationale="Attempted the configured login flow before deterministic CRUD checks.",
+                risk_level=RiskLevel.RISKY.value,
+                status=StepStatus.FAILED.value,
+                details={"error": str(exc), "url": page.url, "title": await page.title()},
+                locator={"strategy": "custom", "selector": config.submit_selector or "login-submit"},
+                element_label="Login submission",
+            )
+            self._record_failure(
+                run_id=state["run"].id,
+                failure_type=FailureType.EXPLORATION.value,
+                title="Deterministic login failed",
+                description=str(exc),
+                evidence={"url": page.url, "target_url": target_url},
+                step_id=step.id,
+                severity="high",
+            )
+            raise
+
+    async def _run_deterministic_module(self, state: GraphState, module_path: str) -> None:
+        config: TestConfig = state["config"]
+        page: Page = state["page"]
+        tools: PlaywrightTools = state["tools"]
+        module_url = self._absolute_module_url(config, module_path)
+        actions = self._normalized_crud_actions(config)
+
+        await tools.open_page(module_url)
+        state["discovered_urls"].add(self._normalized_url(module_url))
+        state["visited_urls"].add(self._normalized_url(module_url))
+        await self._record_manual_step(
+            state,
+            node_name="deterministic_crud",
+            action="open_module",
+            rationale=f"Opened {module_path} directly because the user requested deterministic CRUD coverage for this module.",
+            risk_level=RiskLevel.SAFE.value,
+            status=StepStatus.PASSED.value,
+            details={"url": page.url, "title": await page.title(), "module_path": module_path},
+            locator={},
+            element_label=module_path,
+            successful_action={"type": "goto", "label": f"Open {module_path}", "url": page.url},
+        )
+
+        row_count = await page.locator("tbody tr").count()
+        await self._record_manual_step(
+            state,
+            node_name="deterministic_crud",
+            action="read_module",
+            rationale="Verified that the module list page is reachable before mutating data.",
+            risk_level=RiskLevel.SAFE.value,
+            status=StepStatus.PASSED.value,
+            details={"url": page.url, "title": await page.title(), "row_count": row_count},
+            locator={},
+            element_label=f"{module_path} list",
+            successful_action={"type": "read", "label": f"Read {module_path}", "url": page.url},
+        )
+
+        if "create" not in actions:
+            return
+
+        record = await self._create_deterministic_record(state, module_path)
+        if record is None:
+            return
+
+        if "update" in actions:
+            await self._update_deterministic_record(state, module_path, record)
+
+        if "delete" in actions and config.allow_destructive_actions:
+            await self._delete_deterministic_record(state, module_path, record)
+
+        self._record_flow(
+            run=state["run"],
+            flow_type="crud",
+            name=f"CRUD flow for {module_path}",
+            description=f"Deterministic CRUD execution for {module_path}.",
+            actions=list(state["successful_actions"][-8:]),
+            metadata={"module_path": module_path, "url": page.url, "title": state["page_state"].get("title")},
+        )
+
+    async def _create_deterministic_record(self, state: GraphState, module_path: str) -> dict[str, Any] | None:
+        page: Page = state["page"]
+        tools: PlaywrightTools = state["tools"]
+        list_url = self._absolute_module_url(state["config"], module_path)
+        create_url = list_url.rstrip("/") + "/new"
+
+        await tools.open_page(create_url)
+        await self._record_manual_step(
+            state,
+            node_name="deterministic_crud",
+            action="open_create_form",
+            rationale=f"Opened the create form for {module_path} using the conventional '/new' route.",
+            risk_level=RiskLevel.RISKY.value,
+            status=StepStatus.PASSED.value,
+            details={"url": page.url, "title": await page.title(), "module_path": module_path},
+            locator={},
+            element_label=f"{module_path}/new",
+        )
+
+        controls = await self._inspect_deterministic_form(page)
+        record = self._build_record_fixture(module_path)
+        for control in controls:
+            await self._fill_deterministic_control(page, control, record, mode="create")
+
+        await self._submit_deterministic_form(page)
+        await page.wait_for_timeout(1_500)
+        feedback = await tools.inspect_form_feedback()
+        if feedback.get("invalidFieldCount") or feedback.get("errorMessages"):
+            raise RuntimeError(self._describe_form_feedback(feedback))
+
+        if self._normalized_url(page.url).geturl() != self._normalized_url(list_url).geturl():
+            await tools.open_page(list_url)
+
+        row = await self._locate_record_row(page, record["identity"])
+        if row is None:
+            raise RuntimeError(f"Created row '{record['identity']}' was not found in {module_path}.")
+
+        await self._record_manual_step(
+            state,
+            node_name="deterministic_crud",
+            action="create_record",
+            rationale="Submitted the create form with deterministic valid fixture data and verified the new row appears in the module list.",
+            risk_level=RiskLevel.RISKY.value,
+            status=StepStatus.PASSED.value,
+            details={
+                "url": page.url,
+                "title": await page.title(),
+                "identity": record["identity"],
+                "row_text": await row.inner_text(),
+            },
+            locator={},
+            element_label=record["identity"],
+            successful_action={"type": "create", "label": f"Create {record['identity']}", "url": page.url},
+        )
+        return record
+
+    async def _update_deterministic_record(self, state: GraphState, module_path: str, record: dict[str, Any]) -> None:
+        page: Page = state["page"]
+        tools: PlaywrightTools = state["tools"]
+        list_url = self._absolute_module_url(state["config"], module_path)
+        await tools.open_page(list_url)
+        row = await self._locate_record_row(page, record["identity"])
+        if row is None:
+            raise RuntimeError(f"Could not find row '{record['identity']}' for update.")
+        await self._open_row_edit_form(page, row, module_path, record["identity"])
+        controls = await self._inspect_deterministic_form(page)
+        for control in controls:
+            await self._fill_deterministic_control(page, control, record, mode="update")
+        await self._submit_deterministic_form(page)
+        await page.wait_for_timeout(1_500)
+        feedback = await tools.inspect_form_feedback()
+        if feedback.get("invalidFieldCount") or feedback.get("errorMessages"):
+            raise RuntimeError(self._describe_form_feedback(feedback))
+
+        await tools.open_page(list_url)
+        row = await self._locate_record_row(page, record["updated_identity"])
+        if row is None:
+            raise RuntimeError(f"Updated row '{record['updated_identity']}' was not found in {module_path}.")
+
+        await self._record_manual_step(
+            state,
+            node_name="deterministic_crud",
+            action="update_record",
+            rationale="Updated the same row using deterministic edit data and verified the changed row appears in the list.",
+            risk_level=RiskLevel.RISKY.value,
+            status=StepStatus.PASSED.value,
+            details={"url": page.url, "title": await page.title(), "identity": record["updated_identity"]},
+            locator={},
+            element_label=record["updated_identity"],
+            successful_action={"type": "update", "label": f"Update {record['updated_identity']}", "url": page.url},
+        )
+
+    async def _delete_deterministic_record(self, state: GraphState, module_path: str, record: dict[str, Any]) -> None:
+        page: Page = state["page"]
+        tools: PlaywrightTools = state["tools"]
+        list_url = self._absolute_module_url(state["config"], module_path)
+        await tools.open_page(list_url)
+        delete_identity = record.get("updated_identity") or record["identity"]
+        row = await self._locate_record_row(page, delete_identity)
+        if row is None:
+            raise RuntimeError(f"Could not find row '{delete_identity}' for deletion.")
+
+        delete_button = row.locator("button.table-btn-delete").first
+        if await delete_button.count() == 0:
+            delete_button = row.locator("button").last
+        await delete_button.click()
+        await page.wait_for_timeout(500)
+
+        confirm = page.get_by_role("button", name=re.compile("confirm|delete|yes", re.I))
+        if await confirm.count() == 0:
+            raise RuntimeError("Delete confirmation button was not found.")
+        await confirm.first.click()
+        await page.wait_for_timeout(1_500)
+        await tools.open_page(list_url)
+        if await page.locator("tr", has_text=delete_identity).count():
+            raise RuntimeError(f"Row '{delete_identity}' still appears after delete.")
+
+        await self._record_manual_step(
+            state,
+            node_name="deterministic_crud",
+            action="delete_record",
+            rationale="Deleted the deterministic test row and verified it no longer appears in the module list.",
+            risk_level=RiskLevel.DESTRUCTIVE.value,
+            status=StepStatus.PASSED.value,
+            details={"url": page.url, "title": await page.title(), "identity": delete_identity},
+            locator={},
+            element_label=delete_identity,
+            successful_action={"type": "delete", "label": f"Delete {delete_identity}", "url": page.url},
+        )
+
     async def _inspect_page(self, state: GraphState) -> GraphState:
         await self._await_run_signal(state)
         if state["steps_taken"] >= state["run"].max_steps:
@@ -295,7 +690,7 @@ class ExplorationEngine:
                 href=element.get("href"),
                 allowed_domains=state["allowed_domains"],
             )
-            if discovered_url:
+            if discovered_url and self._is_url_in_scope(discovered_url.geturl(), state["config"]):
                 state["discovered_urls"].add(discovered_url)
         return state
 
@@ -568,11 +963,12 @@ class ExplorationEngine:
         sampled_action_groups: dict[str, int] = state.get("sampled_action_groups", {})
         navigation_stack: list[str] = state["navigation_stack"]
         home_url = normalize_text(state.get("home_url"))
-        safe_mode = state["run"].safe_mode
+        config: TestConfig = state["config"]
         candidates: list[dict[str, Any]] = []
         pending_submit_controls: list[dict[str, Any]] = []
         active_form_variants = self._active_form_variants(elements, current_path, attempted_form_variants)
         sample_group_counts = self._sample_group_counts(current_path, elements)
+        current_path_in_scope = self._is_path_in_scope(current_path, config)
 
         for element in elements:
             if element.get("disabled"):
@@ -581,14 +977,28 @@ class ExplorationEngine:
             href = element.get("href") or ""
             if href.startswith("http") and urlparse(href).netloc not in allowed_domains:
                 continue
+            target_url = self._discover_url_candidate(
+                current_url=current_url,
+                href=href,
+                allowed_domains=allowed_domains,
+            )
+            target_path_in_scope = (
+                self._is_url_in_scope(target_url.geturl(), config)
+                if target_url is not None
+                else current_path_in_scope
+            )
 
             label = normalize_text(element.get("displayLabel"))
             tag = element.get("tag", "")
             risk = element.get("risk", classify_risk(label, href))
-            if safe_mode and risk == RiskLevel.DESTRUCTIVE.value:
+            if risk == RiskLevel.DESTRUCTIVE.value and not config.allow_destructive_actions:
                 continue
 
             raw_category = element.get("category", infer_category(label, href))
+            if not target_path_in_scope and raw_category not in {"login", "navigation"}:
+                continue
+            if not self._is_category_enabled(raw_category, risk=risk, config=config):
+                continue
             form_signature = self._form_signature(current_path, element)
             active_form_variant = active_form_variants.get(form_signature) if form_signature else None
             form_scenario = active_form_variant["name"] if active_form_variant else None
@@ -866,6 +1276,8 @@ class ExplorationEngine:
         for target_url in sorted(discovered_urls - visited_urls):
             if target_url == current_url:
                 continue
+            if not self._is_url_in_scope(target_url.geturl(), config):
+                continue
             action_key = self._action_key(current_path, "goto", target_url.geturl(), "navigation", target_url.geturl())
             if not self._can_queue_action(
                 action_key=action_key,
@@ -968,6 +1380,64 @@ class ExplorationEngine:
     def _normalized_url(self, url: str):
         parsed = urlparse(url)
         return parsed._replace(fragment="")
+
+    def _normalized_scope_patterns(self, patterns: list[str] | None) -> list[str]:
+        normalized: list[str] = []
+        for pattern in patterns or []:
+            text = normalize_text(pattern)
+            if not text:
+                continue
+            parsed = urlparse(text)
+            candidate = parsed.path if parsed.scheme or parsed.netloc else text
+            candidate = candidate.strip()
+            if not candidate.startswith("/"):
+                candidate = f"/{candidate}"
+            normalized.append(candidate)
+        return normalized
+
+    def _matches_path_pattern(self, path: str, pattern: str) -> bool:
+        if pattern in {"", "/"}:
+            return path == "/"
+        if "*" in pattern:
+            return fnmatch.fnmatch(path, pattern)
+        return path == pattern or path.startswith(f"{pattern.rstrip('/')}/")
+
+    def _is_path_in_scope(self, path: str, config: TestConfig) -> bool:
+        normalized_path = path or "/"
+        include_paths = self._normalized_scope_patterns(config.include_paths)
+        exclude_paths = self._normalized_scope_patterns(config.exclude_paths)
+        if any(self._matches_path_pattern(normalized_path, pattern) for pattern in exclude_paths):
+            return False
+        if not include_paths:
+            return True
+        return any(self._matches_path_pattern(normalized_path, pattern) for pattern in include_paths)
+
+    def _is_url_in_scope(self, url: str, config: TestConfig) -> bool:
+        return self._is_path_in_scope(urlparse(url).path or "/", config)
+
+    def _normalized_crud_actions(self, config: TestConfig) -> set[str]:
+        actions = {normalize_text(action).lower() for action in (config.crud_actions or []) if normalize_text(action)}
+        return actions or {"create", "read", "update"}
+
+    def _is_category_enabled(self, category: str, *, risk: str, config: TestConfig) -> bool:
+        actions = self._normalized_crud_actions(config)
+        if risk == RiskLevel.DESTRUCTIVE.value:
+            return config.allow_destructive_actions and "delete" in actions
+        if not config.crud_mode:
+            return category != "logout"
+        if category in {"navigation", "login"}:
+            return True
+        if category == "logout":
+            return False
+        if category == "create":
+            return "create" in actions
+        if category in {"edit", "settings"}:
+            return "update" in actions
+        if category in {"view", "filter"}:
+            return "read" in actions
+        if category == "form":
+            return bool(actions & {"create", "read", "update"})
+        return "read" in actions
 
     def _discover_url_candidate(
         self,
@@ -1413,6 +1883,218 @@ class ExplorationEngine:
             return "The form submission did not show the expected feedback for an out-of-range or edge-case date value."
         return "The form submission did not show the expected validation feedback for an intentionally invalid scenario."
 
+    async def _inspect_deterministic_form(self, page: Page) -> list[dict[str, Any]]:
+        controls = await page.evaluate(
+            """
+            () => {
+              const visible = (element) => {
+                const rect = element.getBoundingClientRect();
+                const style = window.getComputedStyle(element);
+                return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
+              };
+              const labelText = (element) => {
+                const ownLabel = element.closest('label');
+                if (ownLabel?.textContent?.trim()) return ownLabel.textContent.trim();
+                const parent = element.parentElement;
+                const label = parent?.querySelector('label');
+                if (label?.textContent?.trim()) return label.textContent.trim();
+                return element.getAttribute('aria-label') || element.getAttribute('placeholder') || element.getAttribute('name') || '';
+              };
+              const items = [];
+              for (const input of Array.from(document.querySelectorAll('input, textarea, select'))) {
+                if (!visible(input) || input.disabled) continue;
+                const type = (input.getAttribute('type') || '').toLowerCase();
+                if (['hidden', 'submit', 'button', 'reset', 'file'].includes(type)) continue;
+                items.push({
+                  kind: 'field',
+                  tag: input.tagName.toLowerCase(),
+                  type,
+                  name: input.getAttribute('name') || '',
+                  placeholder: input.getAttribute('placeholder') || '',
+                  label: labelText(input),
+                  readOnly: !!input.readOnly,
+                });
+              }
+              for (const button of Array.from(document.querySelectorAll('button[type="button"]'))) {
+                if (!visible(button) || button.disabled || button.closest('aside, nav')) continue;
+                const parent = button.parentElement;
+                const wrapper = parent?.parentElement;
+                const label = wrapper?.querySelector('label');
+                const text = (button.innerText || button.textContent || '').trim();
+                if (!text || /cancel/i.test(text)) continue;
+                const resolvedLabel = label?.textContent?.trim() || text;
+                if (!/select|choose/i.test(text) && !label?.textContent?.trim()) continue;
+                items.push({ kind: 'custom-select', label: resolvedLabel, text });
+              }
+              return items;
+            }
+            """
+        )
+        deduped: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for control in controls:
+            key = f"{control.get('kind')}|{normalize_text(control.get('name') or control.get('label') or control.get('text'))}"
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(dict(control))
+        return deduped
+
+    def _deterministic_value_for_control(self, control: dict[str, Any], record: dict[str, Any], *, mode: str) -> str | None:
+        source = " ".join(
+            normalize_text(control.get(key)) for key in ("name", "label", "placeholder", "type", "tag")
+        ).lower()
+        prefix = "updated_" if mode == "update" else ""
+
+        if "vendor number" in source or ("number" in source and control.get("readOnly")):
+            return None
+        if "account number" in source:
+            return record["updated_phone" if mode == "update" else "phone"]
+        if "email" in source:
+            return record[f"{prefix}email"]
+        if "phone" in source or "mobile" in source:
+            return record[f"{prefix}phone"]
+        if "address" in source:
+            return record[f"{prefix}address"]
+        if "tax registration" in source:
+            return record[f"{prefix}tax_registration_no"]
+        if "pan" in source:
+            return record[f"{prefix}pan_number"]
+        if "credit" in source or "amount" in source or "limit" in source or control.get("type") == "number":
+            return record[f"{prefix}credit_limit"]
+        if "description" in source or "note" in source or "remark" in source or control.get("tag") == "textarea":
+            return record[f"{prefix}description"]
+        if any(token in source for token in {"name", "title", "vendor", "customer", "item"}):
+            return record["updated_identity" if mode == "update" else "identity"]
+        if "password" in source:
+            return None
+        return record["updated_identity" if mode == "update" else "identity"]
+
+    async def _fill_deterministic_control(self, page: Page, control: dict[str, Any], record: dict[str, Any], *, mode: str) -> None:
+        if control.get("kind") == "custom-select":
+            await self._select_deterministic_option(page, control, mode=mode)
+            return
+        if control.get("readOnly"):
+            return
+
+        value = self._deterministic_value_for_control(control, record, mode=mode)
+        if value is None:
+            return
+
+        name = normalize_text(control.get("name"))
+        placeholder = normalize_text(control.get("placeholder"))
+        label = normalize_text(control.get("label"))
+        locator = None
+        if name:
+            locator = page.locator(f"[name='{name}']").first
+        elif placeholder:
+            locator = page.get_by_placeholder(placeholder, exact=False).first
+        elif label:
+            locator = page.get_by_label(label, exact=False).first
+        if locator is None:
+            return
+
+        input_type = normalize_text(control.get("type")).lower()
+        if input_type == "checkbox":
+            should_check = mode != "update"
+            if await locator.is_checked() != should_check:
+                await locator.set_checked(should_check)
+            return
+        if input_type == "radio":
+            await locator.check()
+            return
+
+        if control.get("tag") == "select":
+            try:
+                await locator.select_option(label=value)
+            except PlaywrightError:
+                try:
+                    await locator.select_option(value=value)
+                except PlaywrightError:
+                    await locator.select_option(index=1 if mode == "update" else 0)
+        else:
+            await locator.fill(value)
+
+    async def _select_deterministic_option(self, page: Page, control: dict[str, Any], *, mode: str) -> None:
+        label = normalize_text(control.get("label")).replace("*", "").strip()
+        button = None
+        if label:
+            button = page.locator(
+                f"xpath=//label[contains(normalize-space(.), {self._xpath_literal(label)})]/following::button[@type='button'][1]"
+            ).first
+            if await button.count() == 0:
+                button = None
+        if button is None:
+            button_text = normalize_text(control.get("text")).strip()
+            if not button_text:
+                return
+            button = page.get_by_role("button", name=re.compile(re.escape(button_text), re.I)).first
+        await button.click()
+        await page.wait_for_timeout(300)
+        option_texts = await page.locator("li").evaluate_all(
+            """
+            (els) => els
+              .filter((el) => {
+                const rect = el.getBoundingClientRect();
+                const style = window.getComputedStyle(el);
+                return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
+              })
+              .map((el) => (el.innerText || el.textContent || '').trim())
+              .filter(Boolean)
+            """
+        )
+        filtered = [
+            text for text in option_texts
+            if "select " not in text.lower() and text.lower() != normalize_text(control.get("text")).lower()
+        ]
+        if not filtered:
+            await page.keyboard.press("Escape")
+            return
+        choice_index = 1 if mode == "update" and len(filtered) > 1 else 0
+        await page.locator("li", has_text=filtered[choice_index]).last.click()
+
+    async def _submit_deterministic_form(self, page: Page) -> None:
+        submit = page.get_by_role("button", name=re.compile("save|create|submit|update", re.I))
+        if await submit.count() == 0:
+            submit = page.locator("button[type='submit'], input[type='submit']")
+        await submit.first.click()
+        try:
+            await page.wait_for_load_state("networkidle", timeout=10_000)
+        except PlaywrightTimeoutError:
+            pass
+
+    async def _locate_record_row(self, page: Page, marker: str):
+        row = page.locator("tr", has_text=marker).first
+        try:
+            await row.wait_for(timeout=10_000)
+        except PlaywrightTimeoutError:
+            return None
+        return row
+
+    async def _open_row_edit_form(self, page: Page, row, module_path: str, identity: str) -> None:
+        edit_link = row.locator("a[href*='/edit/']").first
+        if await edit_link.count():
+            href = await edit_link.get_attribute("href")
+            if href:
+                await page.goto(urljoin(page.url, href), wait_until="domcontentloaded")
+                return
+
+        edit_button = row.locator("button.table-btn").first
+        if await edit_button.count() == 0:
+            edit_button = row.locator("button").first
+        if await edit_button.count() == 0:
+            raise RuntimeError(f"Could not find an edit control for '{identity}' in {module_path}.")
+
+        before_url = page.url
+        await edit_button.click()
+        try:
+            await page.wait_for_load_state("networkidle", timeout=10_000)
+        except PlaywrightTimeoutError:
+            pass
+        await page.wait_for_timeout(800)
+        if page.url == before_url and await page.locator("input, textarea, select").count() == 0:
+            raise RuntimeError(f"Clicking the edit control for '{identity}' did not open an editable form.")
+
     def _sample_group_counts(self, path: str, elements: list[dict[str, Any]]) -> dict[str, int]:
         counts: dict[str, int] = {}
         for element in elements:
@@ -1516,6 +2198,40 @@ class ExplorationEngine:
             actions=actions,
             metadata={"url": page.url, "title": state["page_state"].get("title")},
         )
+
+    async def _record_manual_step(
+        self,
+        state: GraphState,
+        *,
+        node_name: str,
+        action: str,
+        rationale: str,
+        risk_level: str,
+        status: str,
+        details: dict[str, Any],
+        locator: dict[str, Any],
+        element_label: str | None,
+        successful_action: dict[str, Any] | None = None,
+    ) -> RunStep:
+        step = await self._append_step(
+            run=state["run"],
+            step_index=state["steps_taken"],
+            node_name=node_name,
+            action=action,
+            rationale=rationale,
+            risk_level=risk_level,
+            status=status,
+            details=details,
+            locator=locator,
+            element_label=element_label,
+        )
+        screenshot_path = await state["tools"].capture_screenshot(state["steps_taken"], element_label or action)
+        self._record_artifact(step.id, state["run"].id, ArtifactType.SCREENSHOT.value, screenshot_path, "image/png")
+        state["last_step_id"] = step.id
+        state["steps_taken"] += 1
+        if status == StepStatus.PASSED.value and successful_action is not None:
+            state["successful_actions"].append(successful_action)
+        return step
 
     async def _fill_by_heuristic(self, page, value: str, labels: list[str]) -> None:
         for label in labels:

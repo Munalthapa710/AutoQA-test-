@@ -75,6 +75,11 @@ def create_run(
             "login_url": config.login_url,
             "headless": config.headless,
             "allowed_domains": config.allowed_domains,
+            "include_paths": config.include_paths,
+            "exclude_paths": config.exclude_paths,
+            "crud_mode": config.crud_mode,
+            "crud_actions": config.crud_actions,
+            "allow_destructive_actions": config.allow_destructive_actions,
         },
         summary={},
     )

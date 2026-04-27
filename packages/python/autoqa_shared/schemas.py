@@ -21,6 +21,11 @@ class TestConfigCreate(BaseModel):
     safe_mode: bool = True
     max_steps: int = Field(default=1000, ge=1, le=1000)
     allowed_domains: list[str] = Field(default_factory=list)
+    include_paths: list[str] = Field(default_factory=list)
+    exclude_paths: list[str] = Field(default_factory=list)
+    crud_mode: bool = False
+    crud_actions: list[str] = Field(default_factory=lambda: ["create", "read", "update"])
+    allow_destructive_actions: bool = False
     notes: str | None = None
 
 
@@ -38,6 +43,11 @@ class TestConfigRead(BaseSchema):
     safe_mode: bool
     max_steps: int
     allowed_domains: list[str]
+    include_paths: list[str]
+    exclude_paths: list[str]
+    crud_mode: bool
+    crud_actions: list[str]
+    allow_destructive_actions: bool
     notes: str | None
     created_at: datetime
     updated_at: datetime

@@ -39,25 +39,30 @@ class GeneratedTestExporter:
     def _render_action(self, action: dict[str, Any]) -> list[str]:
         locator_expr = self._locator_expression(action.get("locator", {}))
         action_type = action.get("type")
+        action_value = action.get("value") or action.get("url") or action.get("label", "")
 
         if action_type == "goto":
-            return [f"await page.goto('{action['value']}');"]
+            if action_value:
+                return [f"await page.goto('{self._escape(action_value)}');"]
+            return []
+        if action_type == "login":
+            return []
+        if action_type == "read":
+            if action_value:
+                return [f"await expect(page).toHaveURL(/.*{self._escape_regex(action_value)}.*/);"]
+            return []
         if action_type == "click" and locator_expr:
             return [f"await {locator_expr}.click();"]
         if action_type == "fill" and locator_expr:
-            value = action.get("value", "")
-            return [f"await {locator_expr}.fill('{self._escape(value)}');"]
+            return [f"await {locator_expr}.fill('{self._escape(action_value)}');"]
         if action_type == "select" and locator_expr:
-            value = action.get("value", "")
-            return [f"await {locator_expr}.selectOption({{ label: '{self._escape(value)}' }});"]
+            return [f"await {locator_expr}.selectOption({{ label: '{self._escape(action_value)}' }});"]
         if action_type == "press":
-            return [f"await page.keyboard.press('{self._escape(action.get('value', 'Enter'))}');"]
+            return [f"await page.keyboard.press('{self._escape(action_value or 'Enter')}');"]
         if action_type == "assert_text":
-            value = action.get("value", "")
-            return [f"await expect(page.getByText('{self._escape(value)}', {{ exact: false }})).toBeVisible();"]
+            return [f"await expect(page.getByText('{self._escape(action_value)}', {{ exact: false }})).toBeVisible();"]
         if action_type == "assert_url":
-            value = action.get("value", "")
-            return [f"await expect(page).toHaveURL(/.*{self._escape_regex(value)}.*/);"]
+            return [f"await expect(page).toHaveURL(/.*{self._escape_regex(action_value)}.*/);"]
         return []
 
     def _locator_expression(self, locator: dict[str, Any]) -> str | None:

@@ -37,6 +37,15 @@ class TestConfig(Base, TimestampMixin):
     safe_mode: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     max_steps: Mapped[int] = mapped_column(Integer, default=1000, nullable=False)
     allowed_domains: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    include_paths: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    exclude_paths: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    crud_mode: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    crud_actions: Mapped[list[str]] = mapped_column(
+        JSON,
+        default=lambda: ["create", "read", "update"],
+        nullable=False,
+    )
+    allow_destructive_actions: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     notes: Mapped[str | None] = mapped_column(Text)
 
     runs: Mapped[list["TestRun"]] = relationship(back_populates="config")
