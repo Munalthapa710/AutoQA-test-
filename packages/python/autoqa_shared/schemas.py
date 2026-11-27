@@ -35,7 +35,6 @@ class TestConfigRead(BaseSchema):
     target_url: str
     login_url: str | None
     username: str | None
-    password: str | None
     username_selector: str | None
     password_selector: str | None
     submit_selector: str | None

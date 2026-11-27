@@ -28,6 +28,17 @@ MODULES_TO_RESET = [
 
 
 class RunControlsApiTests(unittest.TestCase):
+    def test_password_is_not_returned_by_config_or_run_endpoints(self) -> None:
+        client, _, _ = self._load_app()
+        created = client.post("/configs", json={"name": "Private", "target_url": "https://example.com", "password": "secret"})
+        self.assertEqual(created.status_code, 201)
+        config_id = created.json()["id"]
+        self.assertNotIn("password", created.json())
+        self.assertNotIn("password", client.get(f"/configs/{config_id}").json())
+        self.assertNotIn("password", client.get("/configs").json()[0])
+        run_id = client.post("/runs", json={"config_id": config_id}).json()["id"]
+        self.assertNotIn("password", client.get(f"/runs/{run_id}").json()["config"])
+
     def setUp(self) -> None:
         self._original_env = os.environ.copy()
         self._engines_to_dispose = []

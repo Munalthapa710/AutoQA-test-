@@ -31,6 +31,10 @@ export function RunDetail({ runId }: { runId: string }) {
   const [feedback, setFeedback] = useState<string | null>(null);
   const [confirmAction, setConfirmAction] = useState<"stop" | "delete" | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [stepSearch, setStepSearch] = useState("");
+  const [severityFilter, setSeverityFilter] = useState("");
+  const [typeFilter, setTypeFilter] = useState("");
+  const [baseline, setBaseline] = useState<{ run: RunDetailType; failures: FailureReport[] } | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -75,12 +79,37 @@ export function RunDetail({ runId }: { runId: string }) {
     };
   }, [runId, run?.status]);
 
+  useEffect(() => {
+    if (!run || !["completed", "failed", "stopped"].includes(run.status)) return;
+    let active = true;
+    void (async () => {
+      try {
+        const runs = await api.listRuns();
+        const previous = runs.filter((candidate) => candidate.config_id === run.config_id && candidate.id !== run.id && candidate.created_at < run.created_at && ["completed", "failed", "stopped"].includes(candidate.status)).sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
+        if (!previous) return;
+        const [detail, previousFailures] = await Promise.all([api.getRun(previous.id), api.getRunFailures(previous.id)]);
+        if (active) setBaseline({ run: detail, failures: previousFailures });
+      } catch {
+        if (active) setBaseline(null);
+      }
+    })();
+    return () => { active = false; };
+  }, [runId, run?.id, run?.config_id, run?.created_at, run?.status]);
+
   const screenshots = useMemo(() => artifacts.filter((artifact) => artifact.type === "screenshot"), [artifacts]);
   const secondaryArtifacts = useMemo(
     () => artifacts.filter((artifact) => artifact.type !== "screenshot"),
     [artifacts],
   );
   const stepById = useMemo(() => new Map(steps.map((step) => [step.id, step])), [steps]);
+  const filteredSteps = steps.filter((step) =>
+    [step.action, step.rationale, step.element_label, step.url, step.node_name].some((value) =>
+      value?.toLowerCase().includes(stepSearch.toLowerCase()),
+    ),
+  );
+  const filteredFailures = failures.filter((failure) =>
+    (!severityFilter || failure.severity === severityFilter) && (!typeFilter || failure.failure_type === typeFilter),
+  );
   const reportArtifactsByFailureId = useMemo(() => {
     const grouped = new Map<string, Artifact[]>();
     for (const artifact of artifacts) {
@@ -260,11 +289,12 @@ export function RunDetail({ runId }: { runId: string }) {
               <h2 className="mt-1 font-display text-2xl font-semibold text-ink">Execution trace</h2>
             </div>
           </div>
+          <input aria-label="Search execution steps" placeholder="Search steps, pages, or elements" value={stepSearch} onChange={(event) => setStepSearch(event.target.value)} className="mt-5 w-full rounded-2xl border border-slate/20 bg-white px-4 py-3 text-sm" />
           <div className="mt-6 max-h-[520px] space-y-4 overflow-y-auto pr-2">
             {steps.length === 0 ? (
               <p className="text-sm text-slate/70">No steps recorded yet.</p>
             ) : (
-              steps.map((step) => (
+              filteredSteps.map((step) => (
                 <article key={step.id} className="overflow-hidden rounded-[24px] border border-slate/10 bg-sand/50 p-4">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="min-w-0 flex-1">
@@ -294,6 +324,16 @@ export function RunDetail({ runId }: { runId: string }) {
           </div>
         </Panel>
       </section>
+
+      {baseline ? (() => {
+        const key = (failure: FailureReport) => `${failure.failure_type}|${failure.title}`;
+        const previousKeys = new Set(baseline.failures.map(key));
+        const currentKeys = new Set(failures.map(key));
+        const newCount = [...currentKeys].filter((item) => !previousKeys.has(item)).length;
+        const resolvedCount = [...previousKeys].filter((item) => !currentKeys.has(item)).length;
+        const oldPages = getNumber(getRecord(baseline.run.summary)?.visited_url_count) ?? 0;
+        return <Panel><h2 className="font-display text-2xl font-semibold text-ink">Compared with previous run</h2><p className="mt-2 text-sm text-slate/75">Matching findings by type and title. <Link className="underline" href={`/runs/${baseline.run.id}`}>View previous run</Link></p><div className="mt-4 grid gap-3 sm:grid-cols-3"><KeyStat title="New findings" value={String(newCount)} /><KeyStat title="Resolved findings" value={String(resolvedCount)} /><KeyStat title="Pages visited" value={`${oldPages} → ${summary.visitedPages}`} /></div></Panel>;
+      })() : null}
 
       <section className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
         <Panel className="relative overflow-hidden">
@@ -395,11 +435,15 @@ export function RunDetail({ runId }: { runId: string }) {
               <h2 className="mt-1 font-display text-2xl font-semibold text-ink">Failures and findings ({failures.length})</h2>
             </div>
           </div>
+          <div className="mt-5 flex flex-wrap gap-3">
+            <select aria-label="Filter findings by severity" value={severityFilter} onChange={(event) => setSeverityFilter(event.target.value)} className="rounded-xl border border-slate/20 bg-white px-3 py-2 text-sm"><option value="">All severities</option>{[...new Set(failures.map((failure) => failure.severity))].sort().map((severity) => <option key={severity} value={severity}>{severity}</option>)}</select>
+            <select aria-label="Filter findings by type" value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)} className="rounded-xl border border-slate/20 bg-white px-3 py-2 text-sm"><option value="">All types</option>{[...new Set(failures.map((failure) => failure.failure_type))].sort().map((type) => <option key={type} value={type}>{type}</option>)}</select>
+          </div>
           <div className="mt-6 max-h-[520px] space-y-4 overflow-y-auto pr-2">
-            {failures.length === 0 ? (
-              <p className="text-sm text-slate/70">No failures recorded yet.</p>
+            {filteredFailures.length === 0 ? (
+              <p className="text-sm text-slate/70">No findings match these filters.</p>
             ) : (
-              failures.map((failure) => {
+              filteredFailures.map((failure) => {
                 const bugReport = getBugReport(failure.evidence);
                 const linkedStep = failure.step_id ? stepById.get(failure.step_id) ?? null : null;
                 const reportArtifacts = reportArtifactsByFailureId.get(failure.id) ?? [];

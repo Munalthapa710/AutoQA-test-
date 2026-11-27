@@ -18,8 +18,9 @@ class GeneratedTestExporter:
         lines = [
             "import { expect, test } from '@playwright/test';",
             "",
-            f"test('{flow_name}', async ({{ page }}) => {{",
-            f"  await page.goto('{base_url}');",
+            f"test('{self._escape(flow_name)}', async ({{ page }}) => {{",
+            f"  await page.goto('{self._escape(base_url)}');",
+            "  await expect(page.locator('body')).toBeVisible();",
         ]
 
         for action in actions:
@@ -29,7 +30,6 @@ class GeneratedTestExporter:
 
         lines.extend(
             [
-                "  await expect(page).toHaveURL(/.*/);",
                 "});",
                 "",
             ]
@@ -91,7 +91,7 @@ class GeneratedTestExporter:
         return None
 
     def _escape(self, value: str) -> str:
-        return value.replace("\\", "\\\\").replace("'", "\\'")
+        return str(value).replace("\\", "\\\\").replace("'", "\\'").replace("\r", "\\r").replace("\n", "\\n")
 
     def _escape_regex(self, value: str) -> str:
         escaped = []

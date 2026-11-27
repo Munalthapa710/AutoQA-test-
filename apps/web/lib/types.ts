@@ -4,7 +4,6 @@ export type TestConfig = {
   target_url: string;
   login_url: string | null;
   username: string | null;
-  password: string | null;
   username_selector: string | null;
   password_selector: string | null;
   submit_selector: string | null;

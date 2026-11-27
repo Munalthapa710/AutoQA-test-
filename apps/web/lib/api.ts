@@ -266,6 +266,9 @@ export const api = {
           body: JSON.stringify(payload),
         }),
       () => {
+        if (payload.password) {
+          throw new Error("The API must be available to save a configuration with credentials.");
+        }
         const store = readLocalStore();
         const timestamp = nowIso();
         const config: TestConfig = {
@@ -274,7 +277,6 @@ export const api = {
           target_url: String(payload.target_url ?? ""),
           login_url: (payload.login_url as string | null | undefined) ?? null,
           username: (payload.username as string | null | undefined) ?? null,
-          password: (payload.password as string | null | undefined) ?? null,
           username_selector: (payload.username_selector as string | null | undefined) ?? null,
           password_selector: (payload.password_selector as string | null | undefined) ?? null,
           submit_selector: (payload.submit_selector as string | null | undefined) ?? null,
