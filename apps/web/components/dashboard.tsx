@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { formatDistanceToNow } from "date-fns";
-import { ArrowRight, Beaker, History, Pause, Play, Sparkles, Square, Trash2 } from "lucide-react";
+import { ArrowRight, ChevronDown, History, Pause, Play, Search, Square, Trash2 } from "lucide-react";
 
 import { api } from "../lib/api";
 import type { GeneratedTest, RunListItem } from "../lib/types";
@@ -46,8 +46,8 @@ type ConfigFormState = {
 };
 
 const DEFAULT_FORM: ConfigFormState = {
-  name: "Full form coverage",
-  target_url: "http://localhost:3001",
+  name: "",
+  target_url: "",
   login_url: "",
   username: "",
   password: "",
@@ -74,7 +74,11 @@ export function Dashboard() {
   const router = useRouter();
   const [runs, setRuns] = useState<RunListItem[]>([]);
   const [tests, setTests] = useState<GeneratedTest[]>([]);
-  const [activeTab, setActiveTab] = useState<"launch" | "guide" | "activity">("launch");
+  const [activeTab, setActiveTab] = useState<"launch" | "activity">("launch");
+  const [historySearch, setHistorySearch] = useState("");
+  const [historyFilter, setHistoryFilter] = useState("all");
+  const [isLoadingHistory, setIsLoadingHistory] = useState(true);
+  const [historyError, setHistoryError] = useState<string | null>(null);
   const [form, setForm] = useState<ConfigFormState>(DEFAULT_FORM);
   const [isLaunching, setIsLaunching] = useState(false);
   const [busyRunId, setBusyRunId] = useState<string | null>(null);
@@ -87,6 +91,15 @@ export function Dashboard() {
     | null
   >(null);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    function restoreTab() {
+      setActiveTab(window.location.hash === "#history" ? "activity" : "launch");
+    }
+    restoreTab();
+    window.addEventListener("hashchange", restoreTab);
+    return () => window.removeEventListener("hashchange", restoreTab);
+  }, []);
 
   async function loadDashboard() {
     const [runData, testData] = await Promise.all([api.listRuns(), api.listGeneratedTests()]);
@@ -105,10 +118,13 @@ export function Dashboard() {
         }
         setRuns(runData);
         setTests(testData.slice(0, 6));
+        setHistoryError(null);
       } catch (loadError) {
         if (active) {
-          setError(loadError instanceof Error ? loadError.message : "Failed to load dashboard data.");
+          setHistoryError(loadError instanceof Error ? loadError.message : "Failed to load run history.");
         }
+      } finally {
+        if (active) setIsLoadingHistory(false);
       }
     }
 
@@ -125,9 +141,21 @@ export function Dashboard() {
       totalRuns: runs.length,
       activeRuns: runs.filter((run) => isActiveRun(run)).length,
       failedRuns: runs.filter((run) => run.status === "failed").length,
-      generatedTests: tests.length,
     };
-  }, [runs, tests]);
+  }, [runs]);
+
+  const search = historySearch.trim().toLowerCase();
+  const visibleRuns = runs.filter((run) =>
+    (historyFilter === "all" || (historyFilter === "active" ? isActiveRun(run) : run.status === historyFilter)) &&
+    (!search || [run.config_name, run.target_url].some((value) => value.toLowerCase().includes(search))),
+  );
+
+  function showTab(tab: "launch" | "activity") {
+    setError(null);
+    setFeedback(null);
+    setActiveTab(tab);
+    window.history.replaceState(window.history.state, "", tab === "activity" ? "#history" : window.location.pathname + window.location.search);
+  }
 
   async function launchRun(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -136,8 +164,19 @@ export function Dashboard() {
     setFeedback(null);
 
     try {
+      let target: URL;
+      try {
+        target = new URL(form.target_url.trim());
+      } catch {
+        throw new Error("Enter a valid target URL, such as https://staging.example.com.");
+      }
+      if (!["http:", "https:"].includes(target.protocol) || target.username || target.password) {
+        throw new Error("Enter an HTTP or HTTPS target URL without embedded credentials.");
+      }
       const created = await api.createConfig({
         ...form,
+        name: form.name.trim() || target.host,
+        target_url: target.href,
         max_duration_seconds: form.max_duration_seconds ? Number(form.max_duration_seconds) : null,
         login_url: form.login_url || null,
         username: form.username || null,
@@ -219,88 +258,45 @@ export function Dashboard() {
 
   return (
     <main className="mx-auto flex w-full max-w-7xl flex-col gap-6">
-      <Panel className="relative overflow-hidden">
-        <div className="absolute right-0 top-0 h-32 w-32 rounded-full bg-ember/15 blur-3xl" />
-        <div className="absolute bottom-0 left-8 h-28 w-28 rounded-full bg-cyan-300/20 blur-3xl" />
-        <div className="relative">
-          <p className="font-mono text-xs uppercase tracking-[0.34em] text-slate/60">Agentic Web QA</p>
-          <h1 className="mt-3 max-w-2xl font-display text-4xl font-semibold tracking-tight text-ink sm:text-5xl">
-            Systematically discover pages, exercise forms, and turn failures into readable bug reports.
-          </h1>
-          <p className="mt-4 max-w-2xl text-sm leading-6 text-slate/80 sm:text-base">
-            This dashboard is built for QA. It walks same-domain navigation, opens visible create and edit flows, tests invalid and valid form submissions, records every step, and keeps screenshots, traces, and downloadable bug reports in one place.
-          </p>
-          <div className="mt-8 grid gap-3 sm:grid-cols-4">
-            <Metric title="Runs" value={String(totals.totalRuns)} icon={<History className="h-4 w-4" />} />
-            <Metric title="Active" value={String(totals.activeRuns)} icon={<Play className="h-4 w-4" />} />
-            <Metric title="Failures" value={String(totals.failedRuns)} icon={<Beaker className="h-4 w-4" />} />
-            <Metric title="Specs" value={String(totals.generatedTests)} icon={<Sparkles className="h-4 w-4" />} />
-          </div>
+      <section className="flex flex-wrap items-end justify-between gap-5">
+        <div>
+          <h1 className="font-display text-4xl font-semibold tracking-tight text-ink">Exploration runs</h1>
+          <p className="mt-2 text-sm text-slate/75">Start a browser test, check its progress, and review what it found.</p>
         </div>
-      </Panel>
-
-      <section className="flex flex-wrap gap-3">
-        <TabButton
-          label="Launch Run"
-          description="Configure and start a new exploration"
-          active={activeTab === "launch"}
-          onClick={() => setActiveTab("launch")}
-        />
-        <TabButton
-          label="Guide"
-          description="How AutoQA explores and reports issues"
-          active={activeTab === "guide"}
-          onClick={() => setActiveTab("guide")}
-        />
-        <TabButton
-          label="Activity"
-          description="Recent runs and generated specs"
-          active={activeTab === "activity"}
-          onClick={() => setActiveTab("activity")}
-        />
+        <div className="flex flex-wrap gap-x-5 gap-y-2 text-sm text-slate/75">
+          <span><strong className="text-ink">{totals.totalRuns}</strong> total</span>
+          <span><strong className="text-ink">{totals.activeRuns}</strong> active</span>
+          <span><strong className="text-rose-800">{totals.failedRuns}</strong> failed</span>
+        </div>
       </section>
+      <nav aria-label="Run workspace" className="flex flex-wrap gap-2 border-b border-slate/15 pb-3">
+        <TabButton label="New run" active={activeTab === "launch"} onClick={() => showTab("launch")} />
+        <TabButton label="Run history" active={activeTab === "activity"} onClick={() => showTab("activity")} />
+      </nav>
 
       {activeTab === "launch" ? (
-        <section className="grid gap-6">
+        <section className="grid items-start gap-5 lg:grid-cols-[minmax(0,1.7fr)_minmax(0,1fr)]">
           <Panel>
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="font-mono text-xs uppercase tracking-[0.34em] text-slate/60">Launch Run</p>
-                <h2 className="mt-2 font-display text-2xl font-semibold text-ink">Run configuration</h2>
-              </div>
-              <StatusBadge value={form.safe_mode ? "safe" : "risky"} />
-            </div>
-
-            <form className="mt-6 grid gap-4" onSubmit={launchRun}>
-              <FormSection
-                eyebrow="Scope"
-                title="Target and navigation"
-                description="Point the run at the app entry page and keep the domain list tight so the explorer stays on the product under test."
-              >
-                <div className="grid gap-4 md:grid-cols-2">
-                  <Field label="Name">
-                    <input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} className={inputClass} />
-                  </Field>
-                  <Field label="Target URL">
-                    <input value={form.target_url} onChange={(event) => setForm({ ...form, target_url: event.target.value })} className={inputClass} />
-                  </Field>
-                  <Field label="Allowed domains">
-                    <input value={form.allowed_domains} onChange={(event) => setForm({ ...form, allowed_domains: event.target.value })} placeholder="example.com, admin.example.com" className={inputClass} />
-                  </Field>
-                  <Field label="Notes">
-                    <textarea value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} rows={3} className={`${inputClass} min-h-24`} />
-                  </Field>
-                </div>
-              </FormSection>
+            <h2 className="font-display text-2xl font-semibold text-ink">Start a run</h2>
+            <p className="mt-2 text-sm leading-6 text-slate/75">Enter the page where AutoQA should begin exploring.</p>
+            <form className="mt-5 grid gap-4" onSubmit={launchRun} onInvalidCapture={(event) => {
+              const settings = (event.target as HTMLElement).closest("details");
+              if (settings) settings.open = true;
+            }}>
+              <Field label="Target URL">
+                <input type="url" required maxLength={2048} value={form.target_url} onChange={(event) => setForm({ ...form, target_url: event.target.value })} placeholder="https://staging.example.com" className={inputClass} />
+              </Field>
+              <Field label="Run name (optional)">
+                <input maxLength={255} value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="Defaults to the target hostname" className={inputClass} />
+              </Field>
 
               <FormSection
-                eyebrow="Auth"
-                title="Login details"
-                description="Use these fields when the run must sign in before it can reach the real menu structure and form surfaces."
+                title="Sign-in details"
+                description="Add a login page or test account for pages that require sign-in."
               >
                 <div className="grid gap-4 md:grid-cols-2">
                   <Field label="Login URL">
-                    <input value={form.login_url} onChange={(event) => setForm({ ...form, login_url: event.target.value })} className={inputClass} />
+                    <input type="url" maxLength={2048} value={form.login_url} onChange={(event) => setForm({ ...form, login_url: event.target.value })} className={inputClass} />
                   </Field>
                   <Field label="Submit selector">
                     <input value={form.submit_selector} onChange={(event) => setForm({ ...form, submit_selector: event.target.value })} placeholder="button[type='submit']" className={inputClass} />
@@ -321,12 +317,16 @@ export function Dashboard() {
               </FormSection>
 
               <FormSection
-                eyebrow="Scope"
-                title="Modules and CRUD coverage"
-                description="Limit the run to the sections you name and choose whether the agent should focus on create, read, update, and delete behavior."
+                title="Pages and actions"
+                description="Limit where AutoQA can go and choose which record operations to test."
               >
+                <div className="mb-4">
+                  <Field label="Additional allowed domains">
+                    <input value={form.allowed_domains} onChange={(event) => setForm({ ...form, allowed_domains: event.target.value })} placeholder="admin.example.com, accounts.example.com" className={inputClass} />
+                  </Field>
+                </div>
                 <div className="grid gap-4 lg:grid-cols-2">
-                  <Field label="CRUD module paths">
+                  <Field label="Included paths">
                     <textarea
                       value={form.include_paths}
                       onChange={(event) => setForm({ ...form, include_paths: event.target.value })}
@@ -345,8 +345,11 @@ export function Dashboard() {
                     />
                   </Field>
                 </div>
-                <div className="mt-4 grid items-stretch gap-3 md:grid-cols-2 xl:grid-cols-3">
-                  <Toggle label="CRUD mode" checked={form.crud_mode} onChange={(checked) => setForm({ ...form, crud_mode: checked })} />
+                <div className="mt-4">
+                  <Toggle label="Test record operations (CRUD)" checked={form.crud_mode} onChange={(checked) => setForm({ ...form, crud_mode: checked })} />
+                </div>
+                {form.crud_mode ? (
+                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
                   <Toggle label="Create checks" checked={form.crud_create} onChange={(checked) => setForm({ ...form, crud_create: checked })} />
                   <Toggle label="Read checks" checked={form.crud_read} onChange={(checked) => setForm({ ...form, crud_read: checked })} />
                   <Toggle label="Update checks" checked={form.crud_update} onChange={(checked) => setForm({ ...form, crud_update: checked })} />
@@ -356,15 +359,15 @@ export function Dashboard() {
                     checked={form.allow_destructive_actions}
                     onChange={(checked) => setForm({ ...form, allow_destructive_actions: checked })}
                   />
-                </div>
+                  </div>
+                ) : null}
               </FormSection>
 
               <FormSection
-                eyebrow="Depth"
-                title="Execution settings"
-                description="Increase the step budget for large menu trees. Safe mode still blocks destructive actions unless you explicitly enable destructive CRUD coverage above."
+                title="Run limits and browser"
+                description="Set a step budget or time limit, change safe mode, or show the browser."
               >
-                <div className="grid items-stretch gap-3 md:grid-cols-3">
+                <div className="grid items-stretch gap-3 sm:grid-cols-2">
                   <NumberSetting
                     label="Max steps"
                     value={form.max_steps}
@@ -386,90 +389,62 @@ export function Dashboard() {
                     />
                   </label>
                 </div>
+                <div className="mt-4">
+                  <Field label="Notes (optional)">
+                    <textarea value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} rows={2} className={inputClass} />
+                  </Field>
+                </div>
               </FormSection>
 
-              {error ? <p className="rounded-2xl bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</p> : null}
+              {error ? <p role="alert" className="rounded-xl bg-rose-50 px-4 py-3 text-sm text-rose-800">{error}</p> : null}
               {feedback ? (
                 <p aria-live="polite" className="rounded-2xl bg-cyan-50 px-4 py-3 text-sm text-cyan-900">
                   {feedback}
                 </p>
               ) : null}
 
-              <div className="rounded-[22px] border border-slate/10 bg-sand/50 px-4 py-4 text-sm leading-6 text-slate/80">
-                AutoQA will:
-                <br />
-                stay inside the sections you specify,
-                <br />
-                fill visible form fields including dropdowns and toggles,
-                <br />
-                run validation and happy-path form submits when possible,
-                <br />
-                and optionally include explicit CRUD coverage with delete only when you opt in.
+              <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate/10 pt-4">
+                <p className="text-sm text-slate/75">
+                  {form.safe_mode ? "Safe mode on" : "Safe mode off"} · {form.max_steps} step limit
+                </p>
+                <button type="submit" disabled={isLaunching} className="inline-flex items-center gap-2 rounded-xl bg-ink px-5 py-3 text-sm font-semibold text-white hover:bg-slate disabled:cursor-not-allowed disabled:opacity-60">
+                  <Play className="h-4 w-4" aria-hidden="true" />
+                  {isLaunching ? "Starting run…" : "Start run"}
+                </button>
               </div>
-
-              <button
-                type="submit"
-                disabled={isLaunching}
-                className="inline-flex items-center gap-2 rounded-full bg-ink px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {isLaunching ? "Launching..." : "Create config and start run"}
-                <ArrowRight className="h-4 w-4" />
-              </button>
             </form>
+          </Panel>
+          <Panel>
+            <div className="flex items-center gap-2">
+              <History className="h-5 w-5 text-slate/70" aria-hidden="true" />
+              <h2 className="font-display text-xl font-semibold text-ink">Recent runs</h2>
+            </div>
+            {isLoadingHistory ? <p className="mt-4 text-sm text-slate/75" role="status">Loading runs…</p> :
+              historyError ? <p className="mt-4 text-sm text-rose-800" role="status">{historyError}</p> :
+              runs.length ? (
+                <ul className="mt-3 divide-y divide-slate/10">
+                  {runs.slice(0, 4).map((run) => (
+                    <li key={run.id}>
+                      <Link href={`/runs/${run.id}`} className="flex items-center justify-between gap-3 py-3">
+                        <span className="min-w-0"><span className="block break-words text-sm font-semibold">{run.config_name}</span><span className="mt-1 block text-xs text-slate/75">{formatDistanceToNow(new Date(run.created_at), { addSuffix: true })}</span></span>
+                        <StatusBadge value={displayRunStatus(run)} />
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              ) : <p className="mt-4 text-sm leading-6 text-slate/75">Your first run will appear here with its status and results.</p>}
+            <button type="button" onClick={() => showTab("activity")} className="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-slate hover:underline">
+              View run history <ArrowRight className="h-4 w-4" aria-hidden="true" />
+            </button>
           </Panel>
         </section>
       ) : null}
 
-      {activeTab === "guide" ? (
-        <>
-          <section className="grid gap-4 lg:grid-cols-3">
-            <GuideCard
-              title="Discover pages"
-              description="The agent keeps a queue of same-domain links and revisits newly discovered pages so forms hidden behind nav items are easier to reach."
-            />
-            <GuideCard
-              title="Exercise forms"
-              description="For each visible form, the run now tries validation-focused scenarios first and then a happy-path submit when the form stays available."
-            />
-            <GuideCard
-              title="Create bug handoff"
-              description="Failures are stored with a tester-friendly title, bug description, reproduction steps, actual result, expected result, and downloadable evidence."
-            />
-          </section>
-
-          <section className="grid gap-4 lg:grid-cols-4">
-            <WorkflowStep
-              step="1"
-              title="Start at the main app"
-              description="Use the first page a tester would open after login so menu branches can fan out from there."
-            />
-            <WorkflowStep
-              step="2"
-              title="Let AutoQA walk menus"
-              description="The explorer clicks through safe navigation, create, and edit actions, then backtracks to continue into other branches."
-            />
-            <WorkflowStep
-              step="3"
-              title="Review bug cards"
-              description="Each issue card is written to be reused as a bug title plus actual result, expected result, and reproduction steps."
-            />
-            <WorkflowStep
-              step="4"
-              title="File in ClickUp"
-              description="Attach the screenshot, trace, and markdown/json report to give developers direct evidence."
-            />
-          </section>
-        </>
-      ) : null}
-
       {activeTab === "activity" ? (
-        <section className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
+        <section className="grid items-start gap-5 lg:grid-cols-[minmax(0,1.7fr)_minmax(0,1fr)]">
         <Panel>
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="font-mono text-xs uppercase tracking-[0.34em] text-slate/60">Run history</p>
-              <h2 className="mt-2 font-display text-2xl font-semibold text-ink">Recent sessions</h2>
-            </div>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h2 className="font-display text-2xl font-semibold text-ink">Run history</h2>
             <button
               type="button"
               onClick={() => setConfirmAction({ type: "clear-history" })}
@@ -480,11 +455,28 @@ export function Dashboard() {
               {isClearingHistory ? "Clearing..." : "Clear history"}
             </button>
           </div>
-          <div className="mt-6 space-y-4">
-            {runs.length === 0 ? (
-              <EmptyState title="No runs yet" description="Launch the first exploration run to start building coverage and generated tests." />
+          <div className="mt-5 grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">
+            <label className="relative block">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate/60" aria-hidden="true" />
+              <input type="search" aria-label="Search runs" className={`${inputClass} pl-9`} value={historySearch} onChange={(event) => setHistorySearch(event.target.value)} placeholder="Search by run name or URL" />
+            </label>
+            <select aria-label="Filter runs by status" className={inputClass} value={historyFilter} onChange={(event) => setHistoryFilter(event.target.value)}>
+              <option value="all">All statuses</option>
+              <option value="active">Active</option>
+              <option value="completed">Completed</option>
+              <option value="failed">Failed</option>
+              <option value="stopped">Stopped</option>
+            </select>
+          </div>
+          {error || historyError ? <p role="alert" className="mt-4 rounded-xl bg-rose-50 px-4 py-3 text-sm text-rose-800">{error ?? historyError}</p> : null}
+          {feedback ? <p role="status" className="mt-4 rounded-xl bg-mist px-4 py-3 text-sm text-slate">{feedback}</p> : null}
+          <div className="mt-5 space-y-3">
+            {isLoadingHistory ? (
+              <p role="status" className="text-sm text-slate/75">Loading runs…</p>
+            ) : visibleRuns.length === 0 ? (
+              <EmptyState title={runs.length ? "No matching runs" : "No runs yet"} description={runs.length ? "Try a different search or status." : "Start a run to see its progress and results here."} />
             ) : (
-              runs.map((run) => {
+              visibleRuns.map((run) => {
                 const status = displayRunStatus(run);
                 const statusMessage = describeRunStatus(run);
                 return (
@@ -506,7 +498,7 @@ export function Dashboard() {
                   ) : null}
                   <div className="mt-4 flex flex-wrap gap-2">
                     <Link href={`/runs/${run.id}`} className="inline-flex items-center gap-2 rounded-full bg-ink px-4 py-2 text-sm font-semibold text-white">
-                      Open
+                      View results
                     </Link>
                     {canPauseRun(run) ? (
                       <RunActionButton
@@ -549,8 +541,7 @@ export function Dashboard() {
 
         <Panel>
           <div>
-            <p className="font-mono text-xs uppercase tracking-[0.34em] text-slate/60">Generated tests</p>
-            <h2 className="mt-2 font-display text-2xl font-semibold text-ink">Recent exported specs</h2>
+            <h2 className="font-display text-xl font-semibold text-ink">Recent Playwright exports</h2>
           </div>
           <div className="mt-6 space-y-4">
             {tests.length === 0 ? (
@@ -563,11 +554,8 @@ export function Dashboard() {
                       <p className="font-display text-lg font-semibold text-ink">{test.name}</p>
                       <p className="overflow-anywhere mt-1 text-sm text-slate/70">{test.file_path}</p>
                     </div>
-                    <StatusBadge value="completed" />
+                    <ArrowRight className="h-4 w-4 shrink-0 text-slate/70" aria-hidden="true" />
                   </div>
-                  <pre className="mt-4 overflow-x-auto rounded-2xl bg-ink px-4 py-3 font-mono text-xs leading-6 text-sand">
-                    {test.content.split("\n").slice(0, 8).join("\n")}
-                  </pre>
                 </Link>
               ))
             )}
@@ -599,12 +587,10 @@ export function Dashboard() {
 
 function TabButton({
   label,
-  description,
   active,
   onClick,
 }: {
   label: string;
-  description: string;
   active: boolean;
   onClick: () => void;
 }) {
@@ -613,74 +599,37 @@ function TabButton({
       type="button"
       onClick={onClick}
       aria-pressed={active}
-      className={`min-w-[180px] rounded-[22px] border px-4 py-3 text-left transition ${
+      className={`rounded-lg px-4 py-2.5 text-sm font-semibold transition ${
         active
-          ? "border-ink/15 bg-white shadow-pane"
-          : "border-slate/10 bg-white/60 hover:border-slate/20 hover:bg-white/85"
+          ? "bg-ink text-white"
+          : "text-slate hover:bg-slate/10"
       }`}
     >
-      <span className="block font-display text-lg font-semibold text-ink">{label}</span>
-      <span className="mt-1 block text-sm text-slate/70">{description}</span>
+      {label}
     </button>
   );
 }
 
-function Metric({ title, value, icon }: { title: string; value: string; icon: React.ReactNode }) {
-  return (
-    <div className="rounded-[22px] border border-slate/10 bg-white/75 px-4 py-3">
-      <div className="flex items-center justify-between text-slate/70">
-        <span className="font-mono text-xs uppercase tracking-[0.26em]">{title}</span>
-        {icon}
-      </div>
-      <p className="mt-2 font-display text-3xl font-semibold text-ink">{value}</p>
-    </div>
-  );
-}
-
-function GuideCard({ title, description }: { title: string; description: string }) {
-  return (
-    <Panel className="relative overflow-hidden bg-white/80">
-      <div className="absolute right-0 top-0 h-24 w-24 rounded-full bg-ember/10 blur-3xl" />
-      <div className="relative">
-        <p className="font-mono text-xs uppercase tracking-[0.26em] text-slate/55">How It Works</p>
-        <h3 className="mt-3 font-display text-2xl font-semibold text-ink">{title}</h3>
-        <p className="mt-3 text-sm leading-6 text-slate/80">{description}</p>
-      </div>
-    </Panel>
-  );
-}
-
 function FormSection({
-  eyebrow,
   title,
   description,
   children,
 }: {
-  eyebrow: string;
   title: string;
   description: string;
   children: React.ReactNode;
 }) {
   return (
-    <div className="rounded-xl border border-slate/10 bg-white/70 px-4 py-5 shadow-sm">
-      <p className="font-mono text-xs uppercase tracking-[0.22em] text-slate/55">{eyebrow}</p>
-      <h3 className="mt-2 font-display text-xl font-semibold text-ink">{title}</h3>
-      <p className="mt-2 text-sm leading-6 text-slate/75">{description}</p>
-      <div className="mt-4">{children}</div>
-    </div>
-  );
-}
-
-function WorkflowStep({ step, title, description }: { step: string; title: string; description: string }) {
-  return (
-    <Panel className="relative overflow-hidden bg-white/85">
-      <div className="absolute right-0 top-0 h-20 w-20 rounded-full bg-cyan-300/15 blur-3xl" />
-      <div className="relative">
-        <p className="font-mono text-xs uppercase tracking-[0.22em] text-slate/55">Step {step}</p>
-        <h3 className="mt-2 font-display text-2xl font-semibold text-ink">{title}</h3>
-        <p className="mt-3 text-sm leading-6 text-slate/75">{description}</p>
-      </div>
-    </Panel>
+    <details className="group rounded-xl border border-slate/15">
+      <summary className="flex cursor-pointer list-none items-start justify-between gap-3 rounded-xl px-4 py-3.5 hover:bg-sand/60 [&::-webkit-details-marker]:hidden">
+        <span>
+          <span className="block text-sm font-semibold text-ink">{title}</span>
+          <span className="mt-1 block text-sm leading-5 text-slate/75">{description}</span>
+        </span>
+        <ChevronDown className="mt-0.5 h-4 w-4 shrink-0 text-slate/75 transition-transform group-open:rotate-180" aria-hidden="true" />
+      </summary>
+      <div className="border-t border-slate/10 p-4">{children}</div>
+    </details>
   );
 }
 

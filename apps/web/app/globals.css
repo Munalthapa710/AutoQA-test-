@@ -9,11 +9,8 @@
 }
 
 body {
-  @apply bg-sand text-ink antialiased;
-  background-image:
-    radial-gradient(circle at top left, rgba(255, 111, 60, 0.18), transparent 35%),
-    radial-gradient(circle at 80% 20%, rgba(38, 193, 255, 0.18), transparent 28%),
-    linear-gradient(180deg, #fffdf9 0%, #f4ede5 100%);
+  @apply text-ink antialiased;
+  background: #f5f7fa;
   min-height: 100vh;
 }
 
@@ -22,16 +19,17 @@ a {
 }
 
 a:hover {
-  @apply text-ember;
+  text-decoration-color: currentColor;
+}
+
+:where(a, button, input, select, textarea, summary):focus-visible {
+  outline: 2px solid #27649b;
+  outline-offset: 3px;
 }
 
 pre {
   white-space: pre-wrap;
   word-break: break-word;
-}
-
-.page-grid {
-  background-size: 36px 36px;
 }
 
 .overflow-anywhere {

@@ -236,6 +236,14 @@ export function RunDetail({ runId }: { runId: string }) {
 
   return (
     <main className="mx-auto flex w-full max-w-7xl flex-col gap-6">
+      <nav aria-label="Run sections" className="flex flex-wrap items-center gap-x-4 gap-y-3 border-b border-slate/15 pb-3 text-sm font-semibold">
+        <Link href="/#history" className="hover:underline">All runs</Link>
+        <a href="#run-findings" className="hover:underline">Findings ({failures.length})</a>
+        <a href="#run-steps" className="hover:underline">Steps ({steps.length})</a>
+        <a href="#run-coverage" className="hover:underline">Coverage</a>
+        <a href="#run-artifacts" className="hover:underline">Artifacts</a>
+        <a href="#run-tests" className="hover:underline">Playwright tests</a>
+      </nav>
       <section className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
         <Panel>
           <div className="flex flex-wrap items-start justify-between gap-4">
@@ -332,7 +340,7 @@ export function RunDetail({ runId }: { runId: string }) {
             <ScrollText className="h-5 w-5 text-slate" />
             <div>
               <p className="font-mono text-xs uppercase tracking-[0.34em] text-slate/60">Live step log</p>
-              <h2 className="mt-1 font-display text-2xl font-semibold text-ink">Execution trace</h2>
+              <h2 id="run-steps" className="mt-1 scroll-mt-5 font-display text-2xl font-semibold text-ink">Execution trace</h2>
             </div>
           </div>
           <input aria-label="Search execution steps" placeholder="Search steps, pages, or elements" value={stepSearch} onChange={(event) => setStepSearch(event.target.value)} className="mt-5 w-full rounded-2xl border border-slate/20 bg-white px-4 py-3 text-sm" />
@@ -392,7 +400,7 @@ export function RunDetail({ runId }: { runId: string }) {
           <div className="absolute -right-10 top-0 h-28 w-28 rounded-full bg-ember/10 blur-3xl" />
           <div className="relative">
             <p className="font-mono text-xs uppercase tracking-[0.34em] text-slate/60">Coverage map</p>
-            <h2 className="mt-2 font-display text-2xl font-semibold text-ink">What this run actually covered</h2>
+            <h2 id="run-coverage" className="mt-2 scroll-mt-5 font-display text-2xl font-semibold text-ink">Coverage</h2>
             <div className="mt-5 grid gap-3 md:grid-cols-3">
               <CoverageTile
                 title="Page discovery"
@@ -484,7 +492,7 @@ export function RunDetail({ runId }: { runId: string }) {
             <TriangleAlert className="h-5 w-5 text-slate" />
             <div>
               <p className="font-mono text-xs uppercase tracking-[0.34em] text-slate/60">Detected issues</p>
-              <h2 className="mt-1 font-display text-2xl font-semibold text-ink">Failures and findings ({failures.length})</h2>
+              <h2 id="run-findings" className="mt-1 scroll-mt-5 font-display text-2xl font-semibold text-ink">Findings ({failures.length})</h2>
             </div>
           </div>
           <div className="mt-5 flex flex-wrap gap-3">
@@ -630,7 +638,7 @@ export function RunDetail({ runId }: { runId: string }) {
             <ImageIcon className="h-5 w-5 text-slate" />
             <div>
               <p className="font-mono text-xs uppercase tracking-[0.34em] text-slate/60">Artifacts</p>
-              <h2 className="mt-1 font-display text-2xl font-semibold text-ink">Screenshots, traces, and reports ({artifacts.length})</h2>
+              <h2 id="run-artifacts" className="mt-1 scroll-mt-5 font-display text-2xl font-semibold text-ink">Screenshots, traces, and reports ({artifacts.length})</h2>
             </div>
           </div>
           <div className="mt-6 max-h-[520px] overflow-y-auto pr-2">
@@ -665,7 +673,7 @@ export function RunDetail({ runId }: { runId: string }) {
             <FileCode2 className="h-5 w-5 text-slate" />
             <div>
               <p className="font-mono text-xs uppercase tracking-[0.34em] text-slate/60">Generated tests</p>
-              <h2 className="mt-1 font-display text-2xl font-semibold text-ink">Readable Playwright output ({tests.length})</h2>
+              <h2 id="run-tests" className="mt-1 scroll-mt-5 font-display text-2xl font-semibold text-ink">Playwright tests ({tests.length})</h2>
             </div>
           </div>
           <div className="mt-6 max-h-[520px] space-y-4 overflow-y-auto pr-2">

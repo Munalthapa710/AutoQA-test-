@@ -8,7 +8,7 @@ export function Panel({
   children: React.ReactNode;
 }) {
   return (
-    <section className={cn("rounded-[28px] border border-slate/10 bg-white/85 p-6 shadow-pane backdrop-blur", className)}>
+    <section className={cn("min-w-0 rounded-2xl border border-slate/15 bg-white p-4 shadow-sm sm:p-6", className)}>
       {children}
     </section>
   );

@@ -1,18 +1,17 @@
 import type { Config } from "tailwindcss";
 
 const config: Config = {
-  content: [
-    "./app/**/*.{ts,tsx}",
-    "./components/**/*.{ts,tsx}",
-    "./lib/**/*.{ts,tsx}",
-  ],
+  content: {
+    relative: true,
+    files: ["./app/**/*.{ts,tsx}", "./components/**/*.{ts,tsx}", "./lib/**/*.{ts,tsx}"],
+  },
   theme: {
     extend: {
       colors: {
         ink: "#091018",
         ember: "#ff6f3c",
         mist: "#d9f2ff",
-        sand: "#f4ede5",
+        sand: "#edf2f7",
         slate: "#113046",
       },
       boxShadow: {
