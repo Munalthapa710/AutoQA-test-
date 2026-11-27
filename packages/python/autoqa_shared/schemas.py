@@ -1,7 +1,8 @@
 from datetime import datetime
 from typing import Any
+from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class BaseSchema(BaseModel):
@@ -20,6 +21,7 @@ class TestConfigCreate(BaseModel):
     headless: bool = True
     safe_mode: bool = True
     max_steps: int = Field(default=1000, ge=1, le=1000)
+    max_duration_seconds: int | None = Field(default=None, ge=10, le=86400)
     allowed_domains: list[str] = Field(default_factory=list)
     include_paths: list[str] = Field(default_factory=list)
     exclude_paths: list[str] = Field(default_factory=list)
@@ -27,6 +29,16 @@ class TestConfigCreate(BaseModel):
     crud_actions: list[str] = Field(default_factory=lambda: ["create", "read", "update"])
     allow_destructive_actions: bool = False
     notes: str | None = None
+
+    @field_validator("target_url", "login_url")
+    @classmethod
+    def validate_web_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        parsed = urlsplit(value)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username is not None:
+            raise ValueError("Enter an HTTP or HTTPS URL without embedded credentials.")
+        return value
 
 
 class TestConfigRead(BaseSchema):
@@ -41,6 +53,7 @@ class TestConfigRead(BaseSchema):
     headless: bool
     safe_mode: bool
     max_steps: int
+    max_duration_seconds: int | None
     allowed_domains: list[str]
     include_paths: list[str]
     exclude_paths: list[str]

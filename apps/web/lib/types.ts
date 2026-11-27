@@ -10,6 +10,7 @@ export type TestConfig = {
   headless: boolean;
   safe_mode: boolean;
   max_steps: number;
+  max_duration_seconds: number | null;
   allowed_domains: string[];
   include_paths: string[];
   exclude_paths: string[];

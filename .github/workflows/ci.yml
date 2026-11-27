@@ -44,7 +44,11 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}/packages/python:${{ github.workspace }}/apps/api:${{ github.workspace }}/apps/worker
         run: python -c "import worker.main, app.main, autoqa_shared.queue"
 
-      - name: Run Python smoke tests
+      - name: Install Chromium for the browser smoke test
+        run: python -m playwright install --with-deps chromium
+
+      - name: Run Python and browser smoke tests
         env:
           PYTHONPATH: ${{ github.workspace }}/packages/python:${{ github.workspace }}/apps/api:${{ github.workspace }}/apps/worker
+          AUTOQA_BROWSER_SMOKE: "1"
         run: python -m unittest discover -s tests -v

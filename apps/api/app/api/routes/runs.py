@@ -1,7 +1,9 @@
+import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
-from sqlalchemy import select
+from redis.exceptions import RedisError
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session, selectinload
 
 from autoqa_shared.artifact_storage import ArtifactStorage
@@ -23,6 +25,7 @@ from autoqa_shared.queue import RunQueue
 from ...dependencies import get_db, get_queue
 
 router = APIRouter(prefix="/runs", tags=["runs"])
+logger = logging.getLogger(__name__)
 
 TERMINAL_RUN_STATUSES = {RunStatus.COMPLETED.value, RunStatus.FAILED.value, RunStatus.STOPPED.value}
 PAUSED_CONTROL_STATES = {RunControlState.PAUSE_REQUESTED.value, RunControlState.PAUSED.value}
@@ -74,6 +77,7 @@ def create_run(
             "target_url": config.target_url,
             "login_url": config.login_url,
             "headless": config.headless,
+            "max_duration_seconds": config.max_duration_seconds,
             "allowed_domains": config.allowed_domains,
             "include_paths": config.include_paths,
             "exclude_paths": config.exclude_paths,
@@ -86,7 +90,10 @@ def create_run(
     db.add(run)
     db.commit()
     db.refresh(run)
-    queue.enqueue(run.id)
+    try:
+        queue.enqueue(run.id)
+    except (RedisError, OSError):
+        logger.warning("Queue notification failed for run %s; pending run remains in the database", run.id)
     return run
 
 
@@ -157,18 +164,20 @@ def resume_run(run_id: str, db: Session = Depends(get_db)) -> TestRun:
 @router.post("/{run_id}/stop", response_model=TestRunRead)
 def stop_run(run_id: str, db: Session = Depends(get_db)) -> TestRun:
     run = _get_run_or_404(db, run_id)
-    if run.status in TERMINAL_RUN_STATUSES:
-        raise HTTPException(status_code=409, detail="Only active runs can be stopped")
-    if run.status == RunStatus.QUEUED.value:
-        run.status = RunStatus.STOPPED.value
-        run.control_state = None
-        run.error_message = "Run stopped by user."
-        run.ended_at = _utcnow()
-    else:
-        if run.control_state == RunControlState.STOP_REQUESTED.value:
-            raise HTTPException(status_code=409, detail="This run is already stopping")
-        run.control_state = RunControlState.STOP_REQUESTED.value
-        run.error_message = None
+    stopped = db.execute(
+        update(TestRun).where(TestRun.id == run_id, TestRun.status == RunStatus.QUEUED.value)
+        .values(status=RunStatus.STOPPED.value, control_state=None, error_message="Run stopped by user.", ended_at=_utcnow())
+    )
+    if not stopped.rowcount:
+        requested = db.execute(
+            update(TestRun).where(
+                TestRun.id == run_id,
+                TestRun.status == RunStatus.RUNNING.value,
+                TestRun.control_state.is_distinct_from(RunControlState.STOP_REQUESTED.value),
+            ).values(control_state=RunControlState.STOP_REQUESTED.value, error_message=None)
+        )
+        if not requested.rowcount:
+            raise HTTPException(status_code=409, detail="Run is already stopping or has ended")
     db.commit()
     db.refresh(run)
     return run

@@ -30,6 +30,7 @@ type ConfigFormState = {
   password_selector: string;
   submit_selector: string;
   max_steps: number;
+  max_duration_seconds: string;
   safe_mode: boolean;
   headless: boolean;
   allowed_domains: string;
@@ -54,6 +55,7 @@ const DEFAULT_FORM: ConfigFormState = {
   password_selector: "",
   submit_selector: "",
   max_steps: 1000,
+  max_duration_seconds: "",
   safe_mode: true,
   headless: true,
   allowed_domains: "",
@@ -136,6 +138,7 @@ export function Dashboard() {
     try {
       const created = await api.createConfig({
         ...form,
+        max_duration_seconds: form.max_duration_seconds ? Number(form.max_duration_seconds) : null,
         login_url: form.login_url || null,
         username: form.username || null,
         password: form.password || null,
@@ -371,6 +374,17 @@ export function Dashboard() {
                   />
                   <Toggle label="Safe mode" checked={form.safe_mode} onChange={(checked) => setForm({ ...form, safe_mode: checked })} />
                   <Toggle label="Headless browser" checked={form.headless} onChange={(checked) => setForm({ ...form, headless: checked })} />
+                  <label className="block text-sm font-medium text-slate">
+                    Time limit in seconds (optional)
+                    <input
+                      type="number"
+                      min={10}
+                      max={86400}
+                      value={form.max_duration_seconds}
+                      onChange={(event) => setForm({ ...form, max_duration_seconds: event.target.value })}
+                      className={inputClass}
+                    />
+                  </label>
                 </div>
               </FormSection>
 

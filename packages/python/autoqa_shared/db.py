@@ -63,6 +63,8 @@ def _apply_sqlite_compat_migrations(engine) -> None:
             run_columns = {column["name"] for column in inspector.get_columns("test_runs")}
 
     with engine.begin() as connection:
+        if has_test_configs and "max_duration_seconds" not in config_columns:
+            connection.execute(text("ALTER TABLE test_configs ADD COLUMN max_duration_seconds INTEGER"))
         if has_test_configs and "include_paths" not in config_columns:
             connection.execute(text("ALTER TABLE test_configs ADD COLUMN include_paths JSON"))
             connection.execute(text("UPDATE test_configs SET include_paths = '[]' WHERE include_paths IS NULL"))

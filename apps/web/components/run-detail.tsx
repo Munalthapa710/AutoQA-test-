@@ -15,7 +15,7 @@ import {
   displayRunStatus,
   runStatusMessage as describeRunStatus,
 } from "../lib/run-status";
-import type { Artifact, DiscoveredFlow, FailureReport, GeneratedTest, RunDetail as RunDetailType, RunStep } from "../lib/types";
+import type { Artifact, DiscoveredFlow, FailureReport, GeneratedTest, RunDetail as RunDetailType, RunListItem, RunStep } from "../lib/types";
 import { Panel } from "./panel";
 import { StatusBadge } from "./status-badge";
 
@@ -29,12 +29,15 @@ export function RunDetail({ runId }: { runId: string }) {
   const [tests, setTests] = useState<GeneratedTest[]>([]);
   const [isMutating, setIsMutating] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
-  const [confirmAction, setConfirmAction] = useState<"stop" | "delete" | null>(null);
+  const [confirmAction, setConfirmAction] = useState<"stop" | "delete" | "rerun" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [stepSearch, setStepSearch] = useState("");
   const [severityFilter, setSeverityFilter] = useState("");
   const [typeFilter, setTypeFilter] = useState("");
   const [baseline, setBaseline] = useState<{ run: RunDetailType; failures: FailureReport[] } | null>(null);
+  const [baselineChoices, setBaselineChoices] = useState<RunListItem[]>([]);
+  const [baselineId, setBaselineId] = useState("");
+  const [comparisonError, setComparisonError] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -58,6 +61,7 @@ export function RunDetail({ runId }: { runId: string }) {
         setFailures(failureData);
         setArtifacts(artifactData);
         setTests(generatedTests.filter((entry) => entry.run_id === runId));
+        setError(null);
       } catch (loadError) {
         if (active) {
           setError(loadError instanceof Error ? loadError.message : "Failed to load run details.");
@@ -82,19 +86,43 @@ export function RunDetail({ runId }: { runId: string }) {
   useEffect(() => {
     if (!run || !["completed", "failed", "stopped"].includes(run.status)) return;
     let active = true;
+    setBaselineChoices([]);
+    setBaselineId("");
+    setComparisonError(false);
     void (async () => {
       try {
         const runs = await api.listRuns();
-        const previous = runs.filter((candidate) => candidate.config_id === run.config_id && candidate.id !== run.id && candidate.created_at < run.created_at && ["completed", "failed", "stopped"].includes(candidate.status)).sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
-        if (!previous) return;
-        const [detail, previousFailures] = await Promise.all([api.getRun(previous.id), api.getRunFailures(previous.id)]);
-        if (active) setBaseline({ run: detail, failures: previousFailures });
+        const previous = runs.filter((candidate) =>
+          candidate.config_id === run.config_id &&
+          candidate.created_at < run.created_at &&
+          candidate.status === "completed",
+        ).sort((a, b) => b.created_at.localeCompare(a.created_at));
+        if (active) {
+          setBaselineChoices(previous);
+          setBaselineId(previous[0]?.id ?? "");
+        }
       } catch {
-        if (active) setBaseline(null);
+        if (active) setComparisonError(true);
       }
     })();
     return () => { active = false; };
   }, [runId, run?.id, run?.config_id, run?.created_at, run?.status]);
+
+  useEffect(() => {
+    let active = true;
+    setBaseline(null);
+    if (baselineId) {
+      setComparisonError(false);
+      void Promise.all([api.getRun(baselineId), api.getRunFailures(baselineId)])
+        .then(([detail, previousFailures]) => {
+          if (active) setBaseline({ run: detail, failures: previousFailures });
+        })
+        .catch(() => {
+          if (active) setComparisonError(true);
+        });
+    }
+    return () => { active = false; };
+  }, [baselineId]);
 
   const screenshots = useMemo(() => artifacts.filter((artifact) => artifact.type === "screenshot"), [artifacts]);
   const secondaryArtifacts = useMemo(
@@ -147,13 +175,13 @@ export function RunDetail({ runId }: { runId: string }) {
     };
   }, [failures.length, run?.summary]);
 
-  async function handleRunAction(action: "pause" | "resume" | "stop" | "delete") {
+  async function handleRunAction(action: "pause" | "resume" | "stop" | "delete" | "rerun") {
     if (!run) {
       return;
     }
     setIsMutating(true);
     setError(null);
-    setFeedback(runActionMessage(action, "pending"));
+    setFeedback(action === "rerun" ? "Queueing a new run…" : runActionMessage(action, "pending"));
     try {
       let nextRun: RunDetailType | null = null;
       if (action === "pause") {
@@ -165,9 +193,13 @@ export function RunDetail({ runId }: { runId: string }) {
       } else if (action === "stop") {
         nextRun = { ...run, ...(await api.stopRun(run.id)) };
         setRun({ ...run, ...nextRun });
-      } else {
+      } else if (action === "delete") {
         await api.deleteRun(run.id);
         router.push("/");
+        return;
+      } else {
+        const next = await api.createRun(run.config_id);
+        router.push(`/runs/${next.id}`);
         return;
       }
       setFeedback(runActionMessage(action, "done", nextRun));
@@ -224,11 +256,19 @@ export function RunDetail({ runId }: { runId: string }) {
             <KeyStat title="Findings" value={String(summary.bugReports)} />
             <KeyStat title="Specs" value={String(tests.length)} />
           </div>
+          {steps.length ? (
+            <p className="mt-4 text-sm text-slate/75">
+              Latest step {steps.at(-1)?.step_index} · {steps.at(-1)?.action}
+            </p>
+          ) : null}
 
           <div className="mt-6 grid gap-3 text-sm text-slate/75 sm:grid-cols-2 xl:grid-cols-3">
             <InfoPill label="Created" value={formatDistanceToNow(new Date(run.created_at), { addSuffix: true })} />
             <InfoPill label="Safe mode" value={run.safe_mode ? "enabled" : "disabled"} />
             <InfoPill label="Max steps" value={String(run.max_steps)} />
+            {typeof run.run_settings.max_duration_seconds === "number" ? (
+              <InfoPill label="Time limit" value={`${run.run_settings.max_duration_seconds} seconds`} />
+            ) : null}
             <InfoPill label="Headless" value={String((run.run_settings.headless as boolean | undefined) ?? true)} />
             <InfoPill label="Forms discovered" value={String(summary.discoveredForms)} />
             <InfoPill label="Forms submitted" value={String(summary.submittedForms)} />
@@ -269,10 +309,16 @@ export function RunDetail({ runId }: { runId: string }) {
               </ActionButton>
             ) : null}
             {canDeleteRun(run) ? (
-              <ActionButton disabled={isMutating} onClick={() => setConfirmAction("delete")}>
-                <Trash2 className="h-4 w-4" />
-                {isMutating ? "Deleting..." : "Delete run"}
-              </ActionButton>
+              <>
+                <ActionButton disabled={isMutating} onClick={() => setConfirmAction("rerun")}>
+                  <Play className="h-4 w-4" />
+                  Run configuration again
+                </ActionButton>
+                <ActionButton disabled={isMutating} onClick={() => setConfirmAction("delete")}>
+                  <Trash2 className="h-4 w-4" />
+                  Delete run
+                </ActionButton>
+              </>
             ) : null}
             <Link href="/" className="inline-flex items-center gap-2 rounded-full border border-slate/10 bg-white px-5 py-3 text-sm font-semibold text-slate">
               Back to dashboard
@@ -295,7 +341,7 @@ export function RunDetail({ runId }: { runId: string }) {
               <p className="text-sm text-slate/70">No steps recorded yet.</p>
             ) : (
               filteredSteps.map((step) => (
-                <article key={step.id} className="overflow-hidden rounded-[24px] border border-slate/10 bg-sand/50 p-4">
+                <article key={step.id} id={`step-${step.id}`} className="overflow-hidden rounded-[24px] border border-slate/10 bg-sand/50 p-4">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="min-w-0 flex-1">
                       <p className="font-mono text-xs uppercase tracking-[0.22em] text-slate/60">
@@ -325,15 +371,21 @@ export function RunDetail({ runId }: { runId: string }) {
         </Panel>
       </section>
 
-      {baseline ? (() => {
-        const key = (failure: FailureReport) => `${failure.failure_type}|${failure.title}`;
-        const previousKeys = new Set(baseline.failures.map(key));
-        const currentKeys = new Set(failures.map(key));
-        const newCount = [...currentKeys].filter((item) => !previousKeys.has(item)).length;
-        const resolvedCount = [...previousKeys].filter((item) => !currentKeys.has(item)).length;
-        const oldPages = getNumber(getRecord(baseline.run.summary)?.visited_url_count) ?? 0;
-        return <Panel><h2 className="font-display text-2xl font-semibold text-ink">Compared with previous run</h2><p className="mt-2 text-sm text-slate/75">Matching findings by type and title. <Link className="underline" href={`/runs/${baseline.run.id}`}>View previous run</Link></p><div className="mt-4 grid gap-3 sm:grid-cols-3"><KeyStat title="New findings" value={String(newCount)} /><KeyStat title="Resolved findings" value={String(resolvedCount)} /><KeyStat title="Pages visited" value={`${oldPages} → ${summary.visitedPages}`} /></div></Panel>;
-      })() : null}
+      {baselineChoices.length || comparisonError ? (
+        <Panel>
+          <h2 className="font-display text-2xl font-semibold text-ink">Compare runs</h2>
+          {baselineChoices.length ? (
+            <label className="mt-3 flex flex-wrap items-center gap-3 text-sm text-slate/75">
+              Baseline
+              <select className="rounded-xl border border-slate/20 bg-white px-3 py-2" value={baselineId} onChange={(event) => setBaselineId(event.target.value)}>
+                {baselineChoices.map((choice) => <option key={choice.id} value={choice.id}>{new Date(choice.created_at).toLocaleString()}</option>)}
+              </select>
+            </label>
+          ) : null}
+          {comparisonError ? <p role="status" className="mt-3 text-sm text-rose-700">Could not load the run comparison.</p> : null}
+          {baseline ? <RunComparison baseline={baseline} current={failures} visitedPages={summary.visitedPages} /> : null}
+        </Panel>
+      ) : null}
 
       <section className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
         <Panel className="relative overflow-hidden">
@@ -446,7 +498,10 @@ export function RunDetail({ runId }: { runId: string }) {
               filteredFailures.map((failure) => {
                 const bugReport = getBugReport(failure.evidence);
                 const linkedStep = failure.step_id ? stepById.get(failure.step_id) ?? null : null;
-                const reportArtifacts = reportArtifactsByFailureId.get(failure.id) ?? [];
+                const reportArtifacts = [
+                  ...(reportArtifactsByFailureId.get(failure.id) ?? []),
+                  ...secondaryArtifacts.filter((artifact) => artifact.type === "trace"),
+                ];
                 const failureScreenshots = failure.step_id ? screenshotsByStepId.get(failure.step_id) ?? [] : [];
                 const primaryScreenshot = failureScreenshots[0] ?? null;
                 const displayTitle = bugReport?.title ?? failure.title;
@@ -523,6 +578,20 @@ export function RunDetail({ runId }: { runId: string }) {
                     {bugReport?.expectedResult ? <IssueBlock title="Expected Result" value={bugReport.expectedResult} /> : null}
                     <PageDiffBlock pageDiff={getPageDiff(failure.evidence)} />
                     {bugReport?.reason ? <IssueBlock title="Why this matters" value={bugReport.reason} /> : null}
+                    {linkedStep ? (
+                      <a
+                        href={`#step-${linkedStep.id}`}
+                        onClick={() => {
+                          if (!filteredSteps.includes(linkedStep)) {
+                            setStepSearch("");
+                            window.requestAnimationFrame(() => document.getElementById(`step-${linkedStep.id}`)?.scrollIntoView());
+                          }
+                        }}
+                        className="mt-4 inline-block text-sm font-semibold text-rose-950 underline"
+                      >
+                        View execution step {linkedStep.step_index}
+                      </a>
+                    ) : null}
 
                     {reportArtifacts.length ? (
                       <div className="mt-4 flex flex-wrap gap-3">
@@ -625,13 +694,15 @@ export function RunDetail({ runId }: { runId: string }) {
       </section>
       {confirmAction ? (
         <ConfirmDialog
-          title={confirmAction === "stop" ? "Stop this run?" : "Delete this run?"}
+          title={confirmAction === "stop" ? "Stop this run?" : confirmAction === "rerun" ? "Run this configuration again?" : "Delete this run?"}
           description={
             confirmAction === "stop"
               ? "The worker will stop this run at the next safe checkpoint."
-              : "This run and its recorded history will be removed from the dashboard."
+              : confirmAction === "rerun"
+                ? `A new exploration run will use ${run.config.target_url} and the saved action settings. Forms and enabled CRUD actions may change test data.`
+                : "This run and its recorded history will be removed from the dashboard."
           }
-          confirmLabel={confirmAction === "stop" ? "Stop run" : "Delete run"}
+          confirmLabel={confirmAction === "stop" ? "Stop run" : confirmAction === "rerun" ? "Queue run" : "Delete run"}
           busy={isMutating}
           onCancel={() => setConfirmAction(null)}
           onConfirm={async () => {
@@ -742,6 +813,37 @@ function KeyStat({ title, value }: { title: string; value: string }) {
       <p className="overflow-anywhere font-mono text-[10px] uppercase tracking-[0.18em] text-slate/60">{title}</p>
       <p className="mt-2 overflow-anywhere font-display text-3xl font-semibold leading-none text-ink">{value}</p>
     </div>
+  );
+}
+
+function RunComparison({ baseline, current, visitedPages }: {
+  baseline: { run: RunDetailType; failures: FailureReport[] };
+  current: FailureReport[];
+  visitedPages: number;
+}) {
+  const key = (failure: FailureReport) => JSON.stringify([
+    failure.failure_type,
+    failure.title,
+    getBugReport(failure.evidence)?.pageUrl?.split(/[?#]/)[0] ?? "",
+  ]);
+  const previousKeys = new Set(baseline.failures.map(key));
+  const currentKeys = new Set(current.map(key));
+  const recurring = [...currentKeys].filter((item) => previousKeys.has(item)).length;
+  const missing = [...previousKeys].filter((item) => !currentKeys.has(item)).length;
+  const previousPages = getNumber(getRecord(baseline.run.summary)?.visited_url_count) ?? 0;
+  return (
+    <>
+      <p className="mt-2 text-sm text-slate/75">
+        Findings match by type, title, and page. A finding can be absent when a run covers different pages.
+        {" "}<Link className="underline" href={`/runs/${baseline.run.id}`}>View baseline run</Link>
+      </p>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <KeyStat title="New findings" value={String(currentKeys.size - recurring)} />
+        <KeyStat title="Recurring findings" value={String(recurring)} />
+        <KeyStat title="Not observed" value={String(missing)} />
+        <KeyStat title="Pages visited" value={`${previousPages} → ${visitedPages}`} />
+      </div>
+    </>
   );
 }
 

@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from autoqa_shared.credentials import protect_password
 from autoqa_shared.models import TestConfig
 from autoqa_shared.schemas import TestConfigCreate, TestConfigRead
 
@@ -12,7 +13,12 @@ router = APIRouter(prefix="/configs", tags=["configs"])
 
 @router.post("", response_model=TestConfigRead, status_code=status.HTTP_201_CREATED)
 def create_config(payload: TestConfigCreate, db: Session = Depends(get_db)) -> TestConfig:
-    config = TestConfig(**payload.model_dump())
+    fields = payload.model_dump()
+    try:
+        fields["password"] = protect_password(payload.password)
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    config = TestConfig(**fields)
     db.add(config)
     db.commit()
     db.refresh(config)

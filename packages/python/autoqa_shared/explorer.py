@@ -13,9 +13,11 @@ from langgraph.graph import END, StateGraph
 from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 from playwright.async_api import Page, async_playwright
+from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from .artifact_storage import ArtifactStorage, slugify
+from .credentials import read_password
 from .enums import ArtifactType, FailureType, RiskLevel, RunControlState, RunStatus, StepStatus
 from .generated_tests import GeneratedTestExporter
 from .models import Artifact, DiscoveredFlow, FailureReport, GeneratedTest, RunStep, TestConfig, TestRun
@@ -53,17 +55,22 @@ class ExplorationEngine:
         if run.status != RunStatus.QUEUED.value:
             raise ValueError(f"Run {run_id} is not ready to start from status '{run.status}'")
 
-        run.status = RunStatus.RUNNING.value
-        run.control_state = None
-        run.started_at = utcnow()
-        run.error_message = None
+        claimed = self.db.execute(
+            update(TestRun)
+            .where(TestRun.id == run_id, TestRun.status == RunStatus.QUEUED.value)
+            .values(status=RunStatus.RUNNING.value, control_state=None, started_at=utcnow(), error_message=None)
+        )
         self.db.commit()
+        if not claimed.rowcount:
+            return
 
         graph = self._build_graph()
+        time_limit = run.run_settings.get("max_duration_seconds")
         initial_state: GraphState = {
             "run": run,
             "config": config,
             "steps_taken": 0,
+            "deadline": time.monotonic() + time_limit if time_limit else None,
             "visited_signatures": set(),
             "visited_action_keys": set(),
             "action_attempt_counts": {},
@@ -208,7 +215,8 @@ class ExplorationEngine:
         context = await browser.new_context(ignore_https_errors=True)
         page = await context.new_page()
         tools = PlaywrightTools(page=page, context=context, storage=self.storage, run_id=state["run"].id)
-        await tools.start_tracing()
+        if not config.password and not config.login_url:
+            await tools.start_tracing()
 
         state.update(
             {
@@ -243,7 +251,8 @@ class ExplorationEngine:
 
     async def _login(self, state: GraphState) -> GraphState:
         config: TestConfig = state["config"]
-        if not config.username or not config.password:
+        password = read_password(config.password)
+        if not config.username or not password:
             return state
 
         page = state["page"]
@@ -256,9 +265,9 @@ class ExplorationEngine:
                 await self._fill_by_heuristic(page, config.username, ["email", "username", "user"])
 
             if config.password_selector:
-                await page.locator(config.password_selector).first.fill(config.password)
+                await page.locator(config.password_selector).first.fill(password)
             else:
-                await self._fill_by_heuristic(page, config.password, ["password", "pass"])
+                await self._fill_by_heuristic(page, password, ["password", "pass"])
 
             if config.submit_selector:
                 await page.locator(config.submit_selector).first.click()
@@ -303,12 +312,12 @@ class ExplorationEngine:
                     {
                         "type": "fill",
                         "locator": {"strategy": "css", "selector": config.username_selector or "input[type='email'], input[name='username']"},
-                        "value": config.username,
+                        "credential_env": "AUTOQA_TEST_USERNAME",
                     },
                     {
                         "type": "fill",
                         "locator": {"strategy": "css", "selector": config.password_selector or "input[type='password']"},
-                        "value": config.password,
+                        "credential_env": "AUTOQA_TEST_PASSWORD",
                     },
                     {
                         "type": "click",
@@ -321,6 +330,7 @@ class ExplorationEngine:
             state["last_step_id"] = step.id
             state["steps_taken"] += 1
         except (PlaywrightError, PlaywrightTimeoutError, AssertionError) as exc:
+            error = str(exc).replace(password, "[redacted]")
             step = await self._append_step(
                 run=state["run"],
                 step_index=state["steps_taken"],
@@ -329,7 +339,7 @@ class ExplorationEngine:
                 rationale="Attempted to log in with configured credentials.",
                 risk_level=RiskLevel.RISKY.value,
                 status=StepStatus.FAILED.value,
-                details={"error": str(exc), "url": page.url},
+                details={"error": error, "url": page.url},
                 locator={"strategy": "custom", "selector": config.submit_selector or "heuristic"},
                 element_label="Login submission",
             )
@@ -337,7 +347,7 @@ class ExplorationEngine:
                 run_id=state["run"].id,
                 failure_type=FailureType.EXPLORATION.value,
                 title="Login flow failed",
-                description=str(exc),
+                description=error,
                 evidence={"url": page.url},
                 step_id=step.id,
             )
@@ -378,7 +388,8 @@ class ExplorationEngine:
 
     async def _deterministic_login(self, state: GraphState) -> GraphState:
         config: TestConfig = state["config"]
-        if not config.username or not config.password:
+        password = read_password(config.password)
+        if not config.username or not password:
             return state
 
         page: Page = state["page"]
@@ -393,7 +404,7 @@ class ExplorationEngine:
 
             if await exact_username.count() and await exact_password.count() and await exact_sign_in.count():
                 await exact_username.first.fill(config.username)
-                await exact_password.first.fill(config.password)
+                await exact_password.first.fill(password)
                 await exact_sign_in.first.click()
                 try:
                     await page.wait_for_url(re.compile(r".*/dashboard/?(?:[#?].*)?$", re.I), timeout=15_000)
@@ -410,7 +421,7 @@ class ExplorationEngine:
                     "input[type='password'], input[name*='password' i], input[placeholder*='password' i]"
                 ).first
                 await username_locator.fill(config.username)
-                await password_locator.fill(config.password)
+                await password_locator.fill(password)
 
                 if config.submit_selector:
                     await page.locator(config.submit_selector).first.click()
@@ -451,6 +462,7 @@ class ExplorationEngine:
             )
             return state
         except Exception as exc:
+            error = str(exc).replace(password, "[redacted]")
             step = await self._record_manual_step(
                 state,
                 node_name="login",
@@ -458,7 +470,7 @@ class ExplorationEngine:
                 rationale="Attempted the configured login flow before deterministic CRUD checks.",
                 risk_level=RiskLevel.RISKY.value,
                 status=StepStatus.FAILED.value,
-                details={"error": str(exc), "url": page.url, "title": await page.title()},
+                details={"error": error, "url": page.url, "title": await page.title()},
                 locator={"strategy": "custom", "selector": config.submit_selector or "login-submit"},
                 element_label="Login submission",
             )
@@ -466,12 +478,12 @@ class ExplorationEngine:
                 run_id=state["run"].id,
                 failure_type=FailureType.EXPLORATION.value,
                 title="Deterministic login failed",
-                description=str(exc),
+                description=error,
                 evidence={"url": page.url, "target_url": target_url},
                 step_id=step.id,
                 severity="high",
             )
-            raise
+            raise RuntimeError(error) from None
 
     async def _run_deterministic_module(self, state: GraphState, module_path: str) -> None:
         config: TestConfig = state["config"]
@@ -2847,7 +2859,15 @@ class ExplorationEngine:
             ]
 
         for flow in flows:
-            exported = self.exporter.build(run_name=run.config.name, base_url=run.config.target_url, flow_name=flow.name, actions=flow.path)
+            entry_url = run.config.target_url
+            if flow.flow_type == "login":
+                entry_url = run.config.login_url or entry_url
+            exported = self.exporter.build(
+                run_name=f"{run.id}-{flow.id}-{run.config.name}",
+                base_url=entry_url,
+                flow_name=flow.name,
+                actions=flow.path,
+            )
             stored_path = self.storage.write_generated_test(exported.file_path, exported.content)
             generated = GeneratedTest(
                 run_id=run.id,
@@ -2898,6 +2918,9 @@ class ExplorationEngine:
     async def _await_run_signal(self, state: GraphState) -> None:
         run_id = state["run"].id
         while True:
+            deadline = state.get("deadline")
+            if deadline is not None and time.monotonic() >= deadline:
+                raise RunStoppedError("The run reached its configured time limit.")
             self.db.expire_all()
             run = self.db.get(TestRun, run_id)
             if run is None:

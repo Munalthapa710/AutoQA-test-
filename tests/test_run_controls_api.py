@@ -2,9 +2,13 @@ import importlib
 import os
 import shutil
 import sqlite3
+import subprocess
 import sys
+import threading
 import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -21,6 +25,7 @@ MODULES_TO_RESET = [
     "app.api.routes.runs",
     "autoqa_shared",
     "autoqa_shared.db",
+    "autoqa_shared.credentials",
     "autoqa_shared.models",
     "autoqa_shared.queue",
     "autoqa_shared.settings",
@@ -28,6 +33,65 @@ MODULES_TO_RESET = [
 
 
 class RunControlsApiTests(unittest.TestCase):
+    def test_config_password_is_encrypted_when_key_is_configured(self) -> None:
+        from cryptography.fernet import Fernet
+
+        with patch.dict(self._original_env, {"CREDENTIAL_ENCRYPTION_KEY": Fernet.generate_key().decode()}):
+            client, db_module, models_module = self._load_app()
+            response = client.post(
+                "/configs",
+                json={"name": "Private", "target_url": "https://example.com", "password": "example-secret"},
+            )
+            self.assertEqual(response.status_code, 201)
+            self.assertNotIn("password", response.json())
+            with db_module.SessionLocal() as db:
+                stored = db.get(models_module.TestConfig, response.json()["id"]).password
+            self.assertNotIn("example-secret", stored)
+            credentials = importlib.import_module("autoqa_shared.credentials")
+            self.assertEqual(credentials.read_password(stored), "example-secret")
+
+    @unittest.skipUnless(os.getenv("AUTOQA_BROWSER_SMOKE") == "1", "requires installed Playwright Chromium")
+    def test_worker_runs_fixture_and_serves_artifacts(self) -> None:
+        class FixturePage(BaseHTTPRequestHandler):
+            def do_GET(self):
+                body = b'<html lang="en"><title>AutoQA fixture</title><main><h1>Fixture</h1><a href="/details">Details</a></main></html>'
+                if self.path == "/details":
+                    body = b'<html lang="en"><title>Details</title><main><h1>Details</h1></main></html>'
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html")
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, format, *args):
+                pass
+
+        client, _, _ = self._load_app()
+        with ThreadingHTTPServer(("127.0.0.1", 0), FixturePage) as fixture:
+            thread = threading.Thread(target=fixture.serve_forever, daemon=True)
+            thread.start()
+            try:
+                target = f"http://127.0.0.1:{fixture.server_port}/"
+                config = client.post("/configs", json={"name": "Fixture", "target_url": target, "max_steps": 4})
+                self.assertEqual(config.status_code, 201)
+                queued = client.post("/runs", json={"config_id": config.json()["id"]})
+                self.assertEqual(queued.status_code, 201)
+                run_id = queued.json()["id"]
+                worker = subprocess.run(
+                    [sys.executable, "-c", "from worker.main import process_next_run, RunQueue; assert process_next_run(RunQueue())"],
+                    capture_output=True,
+                    text=True,
+                    timeout=90,
+                )
+                self.assertEqual(worker.returncode, 0, worker.stderr)
+                self.assertEqual(client.get(f"/runs/{run_id}").json()["status"], "completed")
+                self.assertTrue(client.get(f"/runs/{run_id}/steps").json())
+                artifacts = client.get(f"/runs/{run_id}/artifacts").json()
+                trace = next(artifact for artifact in artifacts if artifact["type"] == "trace")
+                self.assertEqual(client.get(f'/files/artifacts/{trace["file_path"]}').status_code, 200)
+            finally:
+                fixture.shutdown()
+                thread.join()
+
     def test_password_is_not_returned_by_config_or_run_endpoints(self) -> None:
         client, _, _ = self._load_app()
         created = client.post("/configs", json={"name": "Private", "target_url": "https://example.com", "password": "secret"})

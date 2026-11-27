@@ -21,7 +21,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </div>
             <nav className="flex items-center gap-4 text-sm font-medium text-slate/80">
               <Link href="/">Dashboard</Link>
-              <a href="http://localhost:8000/health" target="_blank" rel="noreferrer">
+              <a href={`${process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000"}/health`} target="_blank" rel="noreferrer">
                 API Health
               </a>
             </nav>

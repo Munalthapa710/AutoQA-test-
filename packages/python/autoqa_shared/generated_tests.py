@@ -13,8 +13,8 @@ class ExportedTest:
 
 class GeneratedTestExporter:
     def build(self, run_name: str, base_url: str, flow_name: str, actions: list[dict[str, Any]]) -> ExportedTest:
-        safe_flow_name = slugify(flow_name)
-        file_name = f"{slugify(run_name)}-{safe_flow_name}.spec.ts"
+        safe_flow_name = slugify(flow_name)[:80]
+        file_name = f"{slugify(run_name)[:120]}-{safe_flow_name}.spec.ts"
         lines = [
             "import { expect, test } from '@playwright/test';",
             "",
@@ -54,6 +54,12 @@ class GeneratedTestExporter:
         if action_type == "click" and locator_expr:
             return [f"await {locator_expr}.click();"]
         if action_type == "fill" and locator_expr:
+            env_name = action.get("credential_env")
+            if env_name in ("AUTOQA_TEST_USERNAME", "AUTOQA_TEST_PASSWORD"):
+                return [
+                    f"if (!process.env.{env_name}) throw new Error('Set {env_name} before running this test');",
+                    f"await {locator_expr}.fill(process.env.{env_name});",
+                ]
             return [f"await {locator_expr}.fill('{self._escape(action_value)}');"]
         if action_type == "select" and locator_expr:
             return [f"await {locator_expr}.selectOption({{ label: '{self._escape(action_value)}' }});"]

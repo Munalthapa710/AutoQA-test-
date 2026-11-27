@@ -1,7 +1,7 @@
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -19,11 +19,13 @@ class Settings(BaseSettings):
     safe_mode_default: bool = True
     worker_queue_name: str = "autoqa:runs"
     worker_poll_timeout: int = 3
+    credential_encryption_key: SecretStr | None = None
 
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
+        env_ignore_empty=True,
     )
 
 

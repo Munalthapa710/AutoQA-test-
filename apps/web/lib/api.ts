@@ -97,6 +97,16 @@ function readLocalStore(): LocalStore {
     }
 
     const parsed = JSON.parse(raw) as Partial<LocalStore>;
+    let removedPassword = false;
+    for (const config of parsed.configs ?? []) {
+      if (Object.prototype.hasOwnProperty.call(config, "password")) {
+        delete (config as TestConfig & { password?: string }).password;
+        removedPassword = true;
+      }
+    }
+    if (removedPassword) {
+      window.localStorage.setItem(LOCAL_STORE_KEY, JSON.stringify(parsed));
+    }
     return {
       configs: parsed.configs ?? [],
       runs: parsed.runs ?? [],
@@ -283,6 +293,7 @@ export const api = {
           headless: Boolean(payload.headless),
           safe_mode: payload.safe_mode !== false,
           max_steps: Number(payload.max_steps ?? 20),
+          max_duration_seconds: typeof payload.max_duration_seconds === "number" ? payload.max_duration_seconds : null,
           allowed_domains: Array.isArray(payload.allowed_domains)
             ? payload.allowed_domains.filter((item): item is string => typeof item === "string")
             : [],
@@ -337,6 +348,7 @@ export const api = {
             target_url: config.target_url,
             login_url: config.login_url,
             headless: config.headless,
+            max_duration_seconds: config.max_duration_seconds ?? null,
             allowed_domains: config.allowed_domains,
             include_paths: config.include_paths,
             exclude_paths: config.exclude_paths,
